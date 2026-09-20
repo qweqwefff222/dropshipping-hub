@@ -194,6 +194,16 @@ local DEFAULTS = {
 	},
 	-- 保护模式：现金低于阈值时自动停掉一切花钱模块（流水线照常跑）
 	guard = { on = true, cashFloor = 150 },
+	-- 调度联动：任务加速 / 合同驱动生产
+	sched = {
+		questBoost = true, contractBoost = true,
+		selfHeal = true, hourlyReport = true,
+	},
+	-- 维护：日志落盘 / 门禁接口复测
+	maint = {
+		logFile = false, logInterval = 30,
+		gateRecheck = true, recheckInterval = 600,
+	},
 	-- 传送带（后期可升级 / 增加，最多 3 条）
 	conv = {
 		auto = true, count = 1, level = 0, maxCount = 3,
@@ -269,6 +279,7 @@ end)
 --=====================================================================
 local Remotes = RS:FindFirstChild("Remotes") or RS:WaitForChild("Remotes", 10)
 local S = {}
+local STATEPush = 0   -- 最后一次收到 StateUpdate 的时间（自愈判据）
 
 local function requestState()
 	if Remotes and Remotes:FindFirstChild("RequestState") then
@@ -276,7 +287,10 @@ local function requestState()
 	end
 end
 if Remotes and Remotes:FindFirstChild("StateUpdate") then
-	STATE.connect(Remotes.StateUpdate.OnClientEvent, function(t) S = t or {} end)
+	STATE.connect(Remotes.StateUpdate.OnClientEvent, function(t)
+		S = t or {}
+		STATEPush = os.clock()   -- 自愈用：记录最后一次收到服务端状态的时间
+	end)
 end
 
 local function plotName() return plr:GetAttribute("TycoonArea") end
@@ -442,6 +456,9 @@ local function statHours()
 	return math.max(1 / 60, (os.clock() - Stat.startAt) / 3600)
 end
 
+-- 前向声明：§5 的补货要用 Sched.prefProducts，完整定义在 §5.7
+local Sched
+
 --=====================================================================
 -- 4. 执行引擎（传送到位 -> 触发 -> 回原位）
 --=====================================================================
@@ -557,6 +574,12 @@ local function stockOf(pid)
 end
 
 local function restockProduct()
+	-- 合同驱动：有高价值合同在手时，优先保证它的货
+	if Sched and Sched.prefProducts then
+		for pid in pairs(Sched.prefProducts) do
+			if stockOf(pid) <= 0 then return pid end
+		end
+	end
 	local m = cfg.restock.mode
 	if m == "指定产品" and cfg.restock.product ~= "" then return cfg.restock.product end
 	if m == "跟随当前产品" then
@@ -694,9 +717,11 @@ end
 
 local function productPicks()
 	local out = {}
+	-- 任务加速：任务要"解锁商品"时放宽单价上限（现金下限照旧）
+	local questWantsUnlock = cfg.sched.questBoost and Sched and Sched.focus.unlock
 	for _, c in ipairs(productCandidates()) do
 		if passList(cfg.buyprod.allow, c.id, true) and not passList(cfg.buyprod.deny, c.id, false) then
-			if cfg.buyprod.maxPrice <= 0 or c.price <= cfg.buyprod.maxPrice then
+			if questWantsUnlock or cfg.buyprod.maxPrice <= 0 or c.price <= cfg.buyprod.maxPrice then
 				if cashNow() - c.price >= cfg.buyprod.cashFloor then out[#out + 1] = c end
 			end
 		end
@@ -753,7 +778,7 @@ local function roleHasFreeSlot(roleId)
 	return roleUsed(roleId) < cap
 end
 
-local function hireCandidates()
+local function hireCandidates(ignoreMaxPrice)
 	local out, j = {}, G.jobs
 	if not j or type(j.offers) ~= "table" then return out end
 	local floorRank = LEVEL_LABEL[cfg.hire.minLevel] or 0
@@ -764,7 +789,8 @@ local function hireCandidates()
 			if passList(cfg.hire.roles, role, true) and not passList(cfg.hire.denyRoles, role, false) then
 				if levelRank(o.level) >= floorRank then
 					local price = tonumber(o.price) or 0
-					if (cfg.hire.maxPrice <= 0 or price <= cfg.hire.maxPrice) and roleHasFreeSlot(role) then
+					if (ignoreMaxPrice or cfg.hire.maxPrice <= 0 or price <= cfg.hire.maxPrice)
+						and roleHasFreeSlot(role) then
 						out[#out + 1] = {
 							id = o.id, name = tostring(o.name), role = role, level = o.level,
 							price = price, speed = tonumber(o.speed) or 0,
@@ -784,7 +810,9 @@ local function hireCandidates()
 end
 
 local function doHire(dryRun)
-	local list = hireCandidates()
+	-- 任务加速：任务要"雇人"时放宽薪资上限（其余条件与现金下限照旧）
+	local questWantsHire = cfg.sched.questBoost and Sched and Sched.focus.hire
+	local list = hireCandidates(questWantsHire)
 	local target
 	for _, c in ipairs(list) do
 		if cashNow() - c.price >= cfg.hire.cashFloor then target = c break end
@@ -953,12 +981,15 @@ local function adTick()
 	--   否则会反复向服务端发无效投放。CampaignState.slots 是"拥有的位数"，不是空位数。
 	local owned = tonumber((G.campaign and G.campaign.slots) or 1) or 1
 	local used = #((G.campaign and G.campaign.campaigns) or {})
-	if owned - used <= 0 and campaignLeft(pid) <= 0 then
+	local free = owned - used
+	if free <= 0 and campaignLeft(pid) <= 0 then
 		Ad.last = string.format("广告位已满（%d/%d）", used, owned)
 		return
 	end
 	local left = campaignLeft(pid)
-	if left > cfg.ad.minLeft then
+	-- 任务加速：任务要求"投放广告"时不等剩余时间 —— 但必须真有空位，否则服务端必拒
+	local questAd = cfg.sched.questBoost and Sched and Sched.focus.ad
+	if left > cfg.ad.minLeft and not (questAd and free > 0) then
 		Ad.last = string.format("%s 广告剩余 %ds", pid, left)
 		return
 	end
@@ -1255,10 +1286,158 @@ local function opsTick()
 end
 
 --=====================================================================
+-- 5.7 调度联动：任务加速 / 合同驱动 / 自愈 / 报表 / 维护
+--=====================================================================
+Sched = {
+	questAt = 0, focus = { texts = {} }, prefProducts = {},
+	lastReport = os.clock(), recheckAt = 0, logAt = 0, healAt = 0, heals = 0,
+	noPlot = 0, note = "待机", gated = {},
+}
+
+-- 从任务描述反推该做什么（QuestState.questy[].opis 是英文动作短语）
+function Sched.refreshQuest()
+	if os.clock() - Sched.questAt < 20 then return end
+	Sched.questAt = os.clock()
+	requestQuest()
+	local f = Sched.focus
+	f.accept, f.deliver, f.ad, f.hire, f.unlock = false, false, false, false, false
+	f.texts = {}
+	for _, q in ipairs((G.quest and G.quest.questy) or {}) do
+		if not q.claimed then
+			local s = string.lower(tostring(q.opis or ""))
+			f.texts[#f.texts + 1] = string.format("%s  %s/%s",
+				tostring(q.opis or "?"), tostring(q.postep or 0), tostring(q.cel or 0))
+			if string.find(s, "accept", 1, true) and string.find(s, "order", 1, true) then f.accept = true end
+			if string.find(s, "courier", 1, true) or string.find(s, "deliver", 1, true)
+				or string.find(s, "ship", 1, true) then f.deliver = true end
+			if string.find(s, "ad", 1, true) or string.find(s, "campaign", 1, true) then f.ad = true end
+			if string.find(s, "hire", 1, true) or string.find(s, "train", 1, true) then f.hire = true end
+			if string.find(s, "unlock", 1, true) or string.find(s, "research", 1, true) then f.unlock = true end
+		end
+	end
+	Sched.note = (#f.texts > 0) and string.format("在追 %d 个未完成任务", #f.texts) or "无未完成任务"
+end
+
+-- 合同驱动：把最值钱的合同所需产品设为优先（补货 + 接单排序都用它）
+function Sched.refreshContract()
+	Sched.prefProducts = {}
+	if not cfg.sched.contractBoost then return end
+	local best, bestVal
+	for _, o in ipairs((G.contract and G.contract.offers) or {}) do
+		local v = tonumber(o.wartosc) or 0
+		if (tonumber(o.ilosc) or 0) > 0 and (not best or v > bestVal) then best, bestVal = o, v end
+	end
+	if best and best.productId then Sched.prefProducts[tostring(best.productId)] = true end
+end
+
+-- 自愈：服务端长时间不推状态就主动拉；地块暂时找不到就报警
+function Sched.heal()
+	if not cfg.sched.selfHeal then return end
+	if os.clock() - Sched.healAt < 5 then return end
+	Sched.healAt = os.clock()
+	local stale = os.clock() - STATEPush
+	if STATEPush > 0 and stale > 15 then
+		Sched.heals = Sched.heals + 1
+		requestState()
+		if Sched.heals % 6 == 1 then
+			log(string.format("自愈：%.0fs 未收到状态推送，已主动请求", stale))
+		end
+	elseif stale <= 15 then
+		Sched.heals = 0
+	end
+	if not getPlot() then
+		Sched.noPlot = Sched.noPlot + 1
+		if Sched.noPlot % 20 == 1 then log("自愈：地块对象暂时找不到（可能正在重载）") end
+	else
+		Sched.noPlot = 0
+	end
+end
+
+-- 每小时报表
+function Sched.report(force)
+	local now = os.clock()
+	if not force then
+		if not cfg.sched.hourlyReport then return end
+		if now - (Sched.lastReport or 0) < 3600 then return end
+	end
+	Sched.lastReport = now
+	local msg = string.format("近 1 小时：完成 %d 单 ｜ 毛收入 %s ｜ 动作确认 %d 次（失败 %d）｜ AI 调整 %d 次",
+		Pipe.completed, fmt(Stat.gain), Exe.stats.total, Exe.stats.fail, AI.runs)
+	log("报表 " .. msg)
+	Notify("运行报表", msg, "activity")
+end
+
+-- 门禁接口复测：被静态拒绝的接口定期放行一次，开了就立刻告知
+function Sched.recheckGates()
+	if not cfg.maint.gateRecheck then return end
+	local now = os.clock()
+	if now - (Sched.recheckAt or 0) < (tonumber(cfg.maint.recheckInterval) or 600) then return end
+	Sched.recheckAt = now
+	for _, k in ipairs({ "research", "contract", "daily", "train", "hire" }) do
+		local b = Backoff[k]
+		if b and b.fails >= 3 then
+			Backoff[k] = nil
+			Sched.gated[k] = string.format("%s（已试 %d 次失败，本轮复测）", k, b.fails)
+		elseif not b then
+			Sched.gated[k] = nil
+		end
+	end
+end
+
+-- 日志落盘
+function Sched.flushLog()
+	if not cfg.maint.logFile then return end
+	if not (writefile and appendfile) then return end
+	local now = os.clock()
+	if now - (Sched.logAt or 0) < (tonumber(cfg.maint.logInterval) or 30) then return end
+	Sched.logAt = now
+	safe(function()
+		local n = #Log
+		local from = math.max(1, n - 40)
+		local out = {}
+		for i = from, n do out[#out + 1] = Log[i] end
+		appendfile("DropshipHub_log.txt", table.concat(out, "\n") .. "\n")
+	end)
+end
+
+-- 配置导出 / 导入（执行器剪贴板）
+function Sched.exportCfg()
+	if not setclipboard then return false, "当前执行器不支持 setclipboard" end
+	local ok, json = safe(function() return Http:JSONEncode(cfg) end)
+	if not ok or type(json) ~= "string" then return false, "编码失败" end
+	local ok2 = safe(function() setclipboard(json) end)
+	if not ok2 then return false, "写入剪贴板失败" end
+	log(string.format("配置已导出到剪贴板（%d 字节）", #json))
+	return true, string.format("已复制 %d 字节配置 JSON", #json)
+end
+
+function Sched.importCfg()
+	if not getclipboard then return false, "当前执行器不支持 getclipboard" end
+	local ok, txt = safe(function() return getclipboard() end)
+	if not ok or type(txt) ~= "string" or txt == "" then return false, "剪贴板为空" end
+	local ok2, decoded = pcall(function() return Http:JSONDecode(txt) end)
+	if not ok2 or type(decoded) ~= "table" then return false, "剪贴板内容不是合法 JSON" end
+	mergeInto(cfg, decoded)
+	cfgTouch()
+	guardRefresh()
+	log("配置已从剪贴板导入")
+	return true, "已导入（部分项重载后完全生效）"
+end
+
+local function schedTick()
+	safe(Sched.refreshQuest)
+	safe(Sched.refreshContract)
+	safe(Sched.heal)
+	safe(Sched.recheckGates)
+	safe(Sched.report)
+	safe(Sched.flushLog)
+end
+
+--=====================================================================
 -- 5.6 传送带感知（后期可升级 / 增加，最多 3 条）+ AI 自动调参
 --=====================================================================
 local Conv = { at = 0, count = 1, level = 0, maxLevel = 3, price = nil,
-	prompt = nil, last = "—" }
+	prompt = nil, last = "—", belts = {}, avgLevel = 0, target = nil }
 
 -- 实机标定：传送带升级是地块里的物理提示点
 --   Plot.Conveyor.UpgradeAnchor.UpgradePrompt  (ActionText="UPGRADE")
@@ -1270,57 +1449,89 @@ local function readConv(force)
 	Conv.at = os.clock()
 	local plot = getPlot()
 	if not plot then return end
-	local n, lvl, price, prompt = 0, 0, nil, nil
+	local belts = {}
 	for _, m in ipairs(plot:GetChildren()) do
 		if m:IsA("Model") and string.find(string.lower(m.Name), "conveyor", 1, true) then
-			n = n + 1
+			local b = { name = m.Name, level = 0, maxLevel = 3, price = nil, prompt = nil, enabled = false }
 			local ua = m:FindFirstChild("UpgradeAnchor", true)
-			local pr = ua and ua:FindFirstChild("UpgradePrompt", true)
-			if pr then prompt = pr end
-			local panel = ua and ua:FindFirstChild("UpgradePanel", true)
-			if panel then
-				for _, d in ipairs(panel:GetDescendants()) do
-					if d:IsA("TextLabel") then
-						local key = string.lower(d.Name)
-						if string.find(key, "poziom", 1, true) then
-							local cur, mx = string.match(d.Text, "(%d+)%s*/%s*(%d+)")
-							if cur then lvl = math.max(lvl, tonumber(cur) or 0) end
-							if mx then Conv.maxLevel = tonumber(mx) or Conv.maxLevel end
-						elseif string.find(key, "cena", 1, true) then
-							local v = string.match(d.Text, "%d+")
-							if v then price = tonumber(v) end
+			if ua then
+				local pr = ua:FindFirstChild("UpgradePrompt", true)
+				if pr then b.prompt, b.enabled = pr, pr.Enabled == true end
+				local panel = ua:FindFirstChild("UpgradePanel", true)
+				if panel then
+					for _, d in ipairs(panel:GetDescendants()) do
+						if d:IsA("TextLabel") then
+							local key = string.lower(d.Name)
+							if string.find(key, "poziom", 1, true) then
+								local cur, mx = string.match(d.Text, "(%d+)%s*/%s*(%d+)")
+								if cur then b.level = tonumber(cur) or 0 end
+								if mx then b.maxLevel = tonumber(mx) or 3 end
+							elseif string.find(key, "cena", 1, true) then
+								local v = string.match(d.Text, "%d+")
+								if v then b.price = tonumber(v) end
+							end
 						end
 					end
 				end
 			end
+			belts[#belts + 1] = b
 		end
 	end
-	if n > 0 then
-		Conv.count, Conv.level, Conv.price, Conv.prompt = n, lvl, price, prompt
+	if #belts > 0 then
+		table.sort(belts, function(x, y) return tostring(x.name) < tostring(y.name) end)
+		Conv.belts = belts
+		Conv.count = #belts
+		local maxLv, sumLv = 0, 0
+		for _, b in ipairs(belts) do
+			maxLv = math.max(maxLv, b.level)
+			sumLv = sumLv + b.level
+			Conv.maxLevel = b.maxLevel
+		end
+		Conv.level = maxLv
+		Conv.avgLevel = sumLv / #belts
+		-- 升级目标：优先"升级点已开放且等级最低"的带子；都没有开放的就取等级最低的
+		local target
+		for _, b in ipairs(belts) do
+			if b.enabled and b.level < b.maxLevel and (not target or b.level < target.level) then target = b end
+		end
+		if not target then
+			for _, b in ipairs(belts) do
+				if b.level < b.maxLevel and (not target or b.level < target.level) then target = b end
+			end
+		end
+		Conv.target = target
+		Conv.prompt = target and target.prompt or nil
+		Conv.price = target and target.price or nil
 	end
 	if cfg.conv.auto then
 		cfg.conv.count = math.clamp(Conv.count, 1, cfg.conv.maxCount)
-		cfg.conv.level = lvl
+		cfg.conv.level = Conv.level
 	end
 end
 
 local function convUpgrade()
 	readConv(true)
-	local pr = Conv.prompt
-	if not pr or not pr.Parent then
-		Conv.last = "未发现传送带升级点"
+	local belts = Conv.belts or {}
+	if #belts == 0 then
+		Conv.last = "未发现传送带"
 		return false, Conv.last
 	end
-	local maxLv = Conv.maxLevel or 3
-	if Conv.level >= maxLv then
-		Conv.last = string.format("已是满级（%d/%d）", Conv.level, maxLv)
+	local target = Conv.target
+	if not target then
+		Conv.last = string.format("全部满级（%d 条 · 平均 Lv%.1f）", #belts, Conv.avgLevel or 0)
+		return false, Conv.last
+	end
+	local pr = target.prompt
+	if not pr or not pr.Parent then
+		Conv.last = string.format("%s 没有升级提示点", tostring(target.name))
 		return false, Conv.last
 	end
 	if not pr.Enabled then
-		Conv.last = string.format("升级尚未开放（服务端 Enabled=false · 当前 %d/%d）", Conv.level, maxLv)
+		Conv.last = string.format("%s Lv%d/%d 升级未开放（服务端 Enabled=false）",
+			tostring(target.name), target.level, target.maxLevel)
 		return false, Conv.last
 	end
-	local price = tonumber(Conv.price) or 0
+	local price = tonumber(target.price) or 0
 	if guardBlock() then
 		Conv.last = "保护模式：现金过低，暂停升级"
 		return false, Conv.last
@@ -1331,7 +1542,8 @@ local function convUpgrade()
 	end
 	if not canAct() then return false, "节流中" end
 	fireNear(pr)
-	Conv.last = string.format("已触发升级（%s）", fmt(price))
+	Conv.last = string.format("已触发 %s 升级（Lv%d → %d，%s）",
+		tostring(target.name), target.level, target.level + 1, fmt(price))
 	log("传送带升级：" .. Conv.last)
 	return true, Conv.last
 end
@@ -1625,7 +1837,11 @@ local function acCandidates()
 		if tostring(o.status) == "New" and acPass(o) then r[#r + 1] = o end
 	end
 	local pri = cfg.ac.priority
+	-- 合同驱动：正在推进的合同所需产品优先接单
+	local pref = (Sched and Sched.prefProducts) or {}
+	local function prefRank(o) return pref[tostring(o.product or "")] and 1 or 0 end
 	table.sort(r, function(a, b)
+		if prefRank(a) ~= prefRank(b) then return prefRank(a) > prefRank(b) end
 		if pri == "价格最高优先" then
 			return (tonumber(a.price) or 0) > (tonumber(b.price) or 0)
 		elseif pri == "爆款优先" then
@@ -2050,6 +2266,15 @@ if WindUI then
 	para(SecFeatures, "配置系统",
 		"全部设置自动存盘，支持多套配置档案的保存 / 载入 / 设为自动载入 / 删除，切换配置即切换整套策略。",
 		"save")
+	para(SecFeatures, "调度联动",
+		"任务加速：读取任务描述反推目标（要接单 / 发货 / 投放 / 雇人 / 解锁），自动放宽对应门槛以推进任务。合同驱动生产：把最值钱的合同所需商品设为优先，优先补它的货、优先接它的单。",
+		"git-branch")
+	para(SecFeatures, "保护与自愈",
+		"低现金自动刹车（暂停一切花钱模块）；超过 15 秒收不到服务端状态就主动拉取；被服务端反复拒绝的接口做指数退避并定期复测，一旦开放立刻可用。",
+		"check-check")
+	para(SecFeatures, "维护工具",
+		"运行日志可落盘到 DropshipHub_log.txt；配置可一键导出到剪贴板、也可从剪贴板导入。",
+		"folder-cog")
 
 	local SecHow = TabInfo:Section({ Title = "使用指引", Icon = "compass", Opened = false })
 	para(SecHow, "开关窗口", "默认右 Shift，可在「外观」页改成其他按键。", "keyboard")
@@ -2702,6 +2927,30 @@ if WindUI then
 	UI.dFail = para(SecGuard, "动作确认率", "—", "check-check")
 	UI.dViral = para(SecGuard, "当期爆款", "—", "flame")
 
+	local SecSched = TabDash:Section({ Title = "调度联动与自愈", Icon = "git-branch", Opened = true })
+	toggle(SecSched, "任务加速",
+		"读任务描述反推目标：要接单/发货/投放/雇人/解锁时自动放宽对应门槛", "clipboard-check", "sc_quest",
+		cfg.sched.questBoost, function(v) cfg.sched.questBoost = v end)
+	toggle(SecSched, "合同驱动生产",
+		"把最值钱的合同所需商品设为优先：优先补它的货、优先接它的单", "link", "sc_contract",
+		cfg.sched.contractBoost, function(v) cfg.sched.contractBoost = v end)
+	toggle(SecSched, "异常自愈",
+		"超过 15s 收不到服务端状态就主动拉取；地块丢失时报警", "check-check", "sc_heal",
+		cfg.sched.selfHeal, function(v) cfg.sched.selfHeal = v end)
+	toggle(SecSched, "每小时报表",
+		"每小时播报一次完成单数 / 毛收入 / 失败率 / AI 调整次数", "activity", "sc_report",
+		cfg.sched.hourlyReport, function(v) cfg.sched.hourlyReport = v end)
+	mk("Button", SecSched, {
+		Title = "立即出一份报表", Icon = "activity",
+		Callback = function()
+			safe(function() Sched.report(true) end)
+			Notify("运行报表", "已输出到控制台（F9）与通知", "activity")
+		end,
+	})
+	UI.dQuest = para(SecSched, "任务进度", "—", "clipboard-list")
+	UI.dContract = para(SecSched, "合同目标", "—", "link")
+	UI.dOrders = para(SecSched, "在飞订单", "—", "package")
+
 	---------------------------------------------------------------------
 	-- Tab 10 · 外观（WindUI 原生外观能力）
 	---------------------------------------------------------------------
@@ -3013,6 +3262,47 @@ if WindUI then
 	local SecLog = TabTool:Section({ Title = "运行日志", Icon = "scroll-text", Opened = true })
 	UI.pLog = para(SecLog, "最近动作", "—", "scroll-text")
 
+	local SecMaint = TabTool:Section({ Title = "维护", Icon = "folder-cog", Opened = false })
+	toggle(SecMaint, "运行日志落盘",
+		"把最近日志追加写入 DropshipHub_log.txt（需执行器支持 writefile）", "scroll-text", "mt_log",
+		cfg.maint.logFile, function(v)
+			cfg.maint.logFile = v
+			Notify("日志落盘", v and "已启用（写入 DropshipHub_log.txt）" or "已关闭", "scroll-text")
+		end)
+	slider(SecMaint, "落盘间隔", "多久写入一次（秒）", "clock", "mt_log_iv",
+		cfg.maint.logInterval, 10, 300, 5, function(v) cfg.maint.logInterval = v end)
+	toggle(SecMaint, "门禁接口复测",
+		"被服务端反复拒绝的接口（研究/合同等）定期放行复测，一开放立刻可用", "refresh-cw", "mt_gate",
+		cfg.maint.gateRecheck, function(v) cfg.maint.gateRecheck = v end)
+	slider(SecMaint, "复测间隔", "多久复测一次（秒）", "timer-reset", "mt_recheck",
+		cfg.maint.recheckInterval, 60, 3600, 30, function(v) cfg.maint.recheckInterval = v end)
+	mk("Button", SecMaint, {
+		Title = "导出配置到剪贴板", Icon = "clipboard-copy",
+		Callback = function()
+			local ok, msg = Sched.exportCfg()
+			Notify("配置导出", msg or (ok and "已导出" or "失败"), ok and "clipboard-copy" or "triangle-alert")
+		end,
+	})
+	mk("Button", SecMaint, {
+		Title = "从剪贴板导入配置", Icon = "clipboard-check",
+		Callback = function()
+			local ok, msg = Sched.importCfg()
+			Notify("配置导入", msg or (ok and "已导入" or "失败"), ok and "clipboard-check" or "triangle-alert")
+		end,
+	})
+	mk("Button", SecMaint, {
+		Title = "清空日志文件", Icon = "trash",
+		Callback = function()
+			if not writefile then
+				Notify("维护", "执行器不支持 writefile", "triangle-alert")
+				return
+			end
+			local ok = safe(function() writefile("DropshipHub_log.txt", "") end)
+			Notify("维护", ok and "日志文件已清空" or "清空失败", "trash")
+		end,
+	})
+	UI.pGate = para(SecMaint, "门禁接口状态", "—", "info")
+
 	local SecDanger = TabTool:Section({ Title = "危险区", Icon = "triangle-alert", Opened = false })
 	mk("Button", SecDanger, {
 		Title = "卸载脚本", Icon = "power", Color = Color3.fromRGB(214, 70, 70),
@@ -3124,6 +3414,9 @@ task.spawn(function()
 		end
 
 		safe(aiTick)
+
+		-- 调度联动：任务反推 / 合同驱动 / 自愈 / 报表 / 复测 / 日志落盘
+		safe(schedTick)
 	end
 end)
 
@@ -3204,10 +3497,17 @@ task.spawn(function()
 					Ops.last["研究"] or "—", Ops.last["合同"] or "—"))
 				t(UI.pAI, string.format("第 %d 轮 · %s", AI.runs, tostring(cfg.ai.note or "—")))
 				t(UI.pAIChg, #AI.changes > 0 and table.concat(AI.changes, "\n") or "（暂无调整）")
-				t(UI.pConv, string.format("条数 %d/%d ｜ 等级 %d/%d ｜ 升级价 %s ｜ %s",
-					cfg.conv.count, cfg.conv.maxCount, cfg.conv.level, Conv.maxLevel or 3,
-					Conv.price and fmt(Conv.price) or "—",
-					Conv.prompt and (Conv.prompt.Enabled and "可升级" or "未开放") or "无升级点"))
+				do
+					local lines = { string.format("条数 %d/%d ｜ 最高 Lv%d ｜ 平均 Lv%.1f",
+						cfg.conv.count, cfg.conv.maxCount, Conv.level, Conv.avgLevel or 0) }
+					for _, b in ipairs(Conv.belts or {}) do
+						lines[#lines + 1] = string.format("　%s Lv%d/%d %s %s",
+							tostring(b.name), b.level, b.maxLevel,
+							b.enabled and "可升级" or "未开放",
+							b.price and ("$" .. tostring(b.price)) or "")
+					end
+					t(UI.pConv, table.concat(lines, "\n"))
+				end
 				t(UI.pConvLog, Conv.last or "—")
 
 				-- 会话统计 / 收益效率 / 动作确认率 / 当期爆款
@@ -3232,6 +3532,28 @@ task.spawn(function()
 					t(UI.dViral, #names > 0
 						and (table.concat(names, " / ") .. (vp and ("　可投：" .. vp) or "　（均未解锁）"))
 						or "无数据（需打开一次爆款面板）")
+				end
+
+				-- 调度联动：任务进度 / 合同目标 / 在飞订单 / 门禁状态
+				do
+					local f = Sched.focus
+					t(UI.dQuest, (#f.texts > 0) and table.concat(f.texts, "\n") or "无未完成任务")
+					local prefs = {}
+					for pid in pairs(Sched.prefProducts or {}) do prefs[#prefs + 1] = pid end
+					t(UI.dContract, #prefs > 0
+						and ("优先生产：" .. table.concat(prefs, " / "))
+						or (G.contract and (G.contract.hasOffice and "有办公室，暂无可接合同" or "未建办公室，合同未开放")
+							or "无数据"))
+					local fl = {}
+					for _, o in pairs(S.orders or {}) do
+						if FULFIL[tostring(o.status)] then
+							fl[#fl + 1] = string.format("#%s %s", tostring(o.id), tostring(o.status))
+						end
+					end
+					t(UI.dOrders, (#fl > 0) and table.concat(fl, "　｜　") or "无在飞订单")
+					local gl = {}
+					for _, msg in pairs(Sched.gated or {}) do gl[#gl + 1] = msg end
+					t(UI.pGate, (#gl > 0) and table.concat(gl, "\n") or "无被门禁的接口")
 				end
 				t(UI.dCash, fmt(S.cash))
 				t(UI.dGems, fmt(S.gems))
