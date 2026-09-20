@@ -333,11 +333,14 @@ end
 local function activeCount()
 	local af = S.activeFulfillments
 	if type(af) == "table" then
+		-- ⚠ 服务端给了这个字段就一律以它为准 —— 空表就是真的 0（槽位已释放）。
+		--   上一版写成 if n > 0 then return n end 是错的：空表会掉进下面的状态数兜底，
+		--   而 Ready for Courier 属于状态集合，于是算出 1 -> 永久拒绝接单。
 		local n = 0
 		for _ in pairs(af) do n = n + 1 end
-		if n > 0 then return n end
+		return n
 	end
-	-- 兜底（没有该字段时）才退回按状态数
+	-- 只有服务端根本没给这个字段时，才退回按状态数估算
 	local n = 0
 	for _, o in pairs(S.orders or {}) do if FULFIL[tostring(o.status)] then n = n + 1 end end
 	return n
@@ -1782,7 +1785,7 @@ hudVisible(cfg.hud.on)
 -- 7. 订单驱动状态机
 --=====================================================================
 local Pipe = { phase = "IDLE", detail = "待机", orderId = nil, phaseAt = 0,
-	lastAccept = 0, completed = 0, seen = {}, beltTries = 0, beltUntil = 0 }
+	lastAccept = 0, completed = 0, seen = {}, beltTries = 0, beltUntil = 0, acWhy = "" }
 
 local function setPhase(name, detail)
 	if Pipe.phase ~= name then
@@ -1854,11 +1857,23 @@ local function acCandidates()
 end
 
 local function tryAutoAccept()
-	if not cfg.ac.on then return false end
-	if os.clock() - Pipe.lastAccept < cfg.ac.interval then return false end
-	if activeCount() >= math.min(cfg.ac.maxActive, maxActive()) then return false end
+	if not cfg.ac.on then Pipe.acWhy = "未启用" return false end
+	if os.clock() - Pipe.lastAccept < cfg.ac.interval then
+		Pipe.acWhy = string.format("节流中（%.1fs）", cfg.ac.interval)
+		return false
+	end
+	-- 闸门明细：把"为什么没接"直接暴露到看板上，别再靠猜
+	local used, cap = activeCount(), math.min(cfg.ac.maxActive, maxActive())
+	if used >= cap then
+		Pipe.acWhy = string.format("履约位满 %d/%d", used, cap)
+		return false
+	end
 	local c = acCandidates()
-	if #c == 0 then return false end
+	if #c == 0 then
+		Pipe.acWhy = "没有符合条件的新单"
+		return false
+	end
+	Pipe.acWhy = ""
 	Pipe.lastAccept = os.clock()
 	return acceptOrder(c[1].id)
 end
@@ -2120,15 +2135,36 @@ if WindUI then
 		SideBarWidth = 190,
 		HideSearchBar = false,
 		ScrollBarEnabled = true,
-		Acrylic     = vw.acrylic,
+		-- ⚠ Acrylic 必须建窗口时就传 true：WindUI 只在创建时生成 AcrylicPaint，
+		--   而 WindUI:ToggleAcrylic 内部要求 Window.AcrylicPaint 存在，否则整段空转。
+		--   所以这里固定 true 先把对象建出来，紧接着按存档状态真正关掉。
+		Acrylic     = true,
 		BackgroundImageTransparency = 0.35,
 		ToggleKey   = Enum.KeyCode.RightShift,
 		User        = { Enabled = true, Anonymous = false },
 	})
-	safe(function() Window:SetBackgroundTransparency(vw.bgTransparency) end)
+	-- 背景透明：⚠ WindUI 这版的 Window:SetBackgroundTransparency(A, B) 读的是**第二个**参数，
+	--   而且它内部调用两参数的 ToggleTransparency 时只传了一个 -> F=nil -> 落到 0 -> 等于没效果。
+	--   这里按库的真实语义自己走：先写 TransparencyValue，再用 (state, state) 调 ToggleTransparency。
+	local function applyTransparency(v)
+		v = math.clamp(tonumber(v) or 0, 0, 1)
+		safe(function() WindUI.TransparencyValue = v end)
+		safe(function() Window:ToggleTransparency(v > 0, v > 0) end)
+		safe(function()
+			local ui = Window.UIElements
+			local bg = ui and ui.Main and ui.Main:FindFirstChild("Background")
+			if bg then bg.ImageTransparency = v end
+		end)
+	end
+	UI.applyTransparency = applyTransparency
+	-- 透明度以「背景透明度」滑块的值为准，总开关跟随它同步，避免两个控件打架
+	applyTransparency(vw.bgTransparency)
+	cfg.view.transparency = (tonumber(vw.bgTransparency) or 0) > 0
 	safe(function() Window:SetPanelBackground(vw.panelBg) end)
 	safe(function() Window:SetUIScale(vw.uiScale) end)
 	if vw.bgImage ~= "" then safe(function() Window:SetBackgroundImage(vw.bgImage) end) end
+	-- 按存档状态真正应用亚克力（对象已在上面建好）
+	safe(function() WindUI:ToggleAcrylic(vw.acrylic) end)
 
 	Notify = function(t, c, i)
 		safe(function()
@@ -2994,20 +3030,23 @@ if WindUI then
 			cfg.view.height = v
 			safe(function() Window:SetSize(UDim2.fromOffset(cfg.view.width, v)) end)
 		end)
-	slider(SecLook, "背景透明度", "0 = 全不透明，1 = 全透明", "contrast", "view_bgtrans",
+	slider(SecLook, "背景透明度", "0 = 全不透明，1 = 全透明（走 WindUI 真实语义）", "contrast", "view_bgtrans",
 		cfg.view.bgTransparency, 0, 0.9, 0.05, function(v)
 			cfg.view.bgTransparency = v
-			safe(function() Window:SetBackgroundTransparency(v) end)
+			applyTransparency(v)
 		end)
-	toggle(SecLook, "窗口整体透明", "WindUI 的透明模式", "droplet", "view_trans",
+	toggle(SecLook, "窗口整体透明", "快捷预设：开 = 背景全透；关 = 恢复不透明", "droplet", "view_trans",
 		cfg.view.transparency, function(v)
 			cfg.view.transparency = v
-			safe(function() Window:ToggleTransparency() end)
+			cfg.view.bgTransparency = v and 0.9 or 0   -- 与滑块值保持同步，避免下次启动打架
+			applyTransparency(cfg.view.bgTransparency)
+			Notify("外观", v and "背景已全透" or "背景已恢复不透明", "droplet")
 		end)
-	toggle(SecLook, "亚克力模糊", "背景模糊效果（较吃性能）", "sparkles", "view_acrylic",
+	toggle(SecLook, "亚克力模糊", "背景模糊（较吃性能；需显卡质量较高才看得出）", "sparkles", "view_acrylic",
 		cfg.view.acrylic, function(v)
 			cfg.view.acrylic = v
 			safe(function() WindUI:ToggleAcrylic(v) end)
+			if not v then Notify("外观", "亚克力已关闭", "sparkles") end
 		end)
 	toggle(SecLook, "显示面板背景", "关掉后内容区透明", "square-dashed", "view_panel",
 		cfg.view.panelBg, function(v)
@@ -3029,9 +3068,15 @@ if WindUI then
 			Notify("外观", "已切换全屏", "maximize") end,
 	})
 	mk("Button", SecLookAct, {
-		Title = "切换亚克力（库级）", Icon = "sparkles",
-		Callback = function() safe(function() WindUI:ToggleAcrylic() end)
-			Notify("外观", "已切换亚克力", "sparkles") end,
+		Title = "切换亚克力", Icon = "sparkles",
+		-- 原来调的是 WindUI:ToggleAcrylic()（无参）—— 无参时内部 aA=nil，
+		-- 只会把亚克力关掉，并不是真的"切换"。这里改成翻转配置再按状态应用。
+		Callback = function()
+			cfg.view.acrylic = not cfg.view.acrylic
+			cfgTouch()
+			safe(function() WindUI:ToggleAcrylic(cfg.view.acrylic) end)
+			Notify("外观", cfg.view.acrylic and "亚克力已开启" or "亚克力已关闭", "sparkles")
+		end,
 	})
 	local bgInput = mk("Input", SecLookAct, {
 		Title = "窗口背景图", Desc = "rbxassetid:// 或 https 图片地址",
@@ -3463,7 +3508,9 @@ task.spawn(function()
 					HUD.row.orders.Text = lineOrder
 					HUD.row.carry.Text = "搬运 " .. carryCn
 					HUD.row.phase.Text = "阶段 " .. Pipe.phase .. " · " .. Pipe.detail
-					HUD.row.ac.Text = "接单 " .. (cfg.ac.on and ("开 · 候选 " .. #acCandidates()) or "关")
+					HUD.row.ac.Text = string.format("接单 %s ｜ 履约 %d/%d ｜ %s",
+						cfg.ac.on and "开" or "关", activeCount(), math.min(cfg.ac.maxActive, maxActive()),
+						cfg.ac.on and ((Pipe.acWhy ~= "" and Pipe.acWhy) or ("候选 " .. #acCandidates())) or "—")
 					HUD.row.rest.Text = "补货 " .. (cfg.restock.on and ("开 · " .. Rst.last) or "关")
 					HUD.row.mode.Text = string.format("传送带 %d 条·Lv%d ｜ AI %s ｜ 回位 %s",
 						cfg.conv.count, cfg.conv.level,
@@ -3567,6 +3614,15 @@ task.spawn(function()
 				if ConfigMgr.lastMsg ~= "—" then
 					t(UI.pCfg, string.format("配置 %s · %s · 共 %d 个",
 						tostring(ConfigMgr.name), ConfigMgr.lastMsg, #ConfigMgr.list))
+				end
+
+				-- 亚克力状态守夜：WindUI 在每次开窗时会自己 ToggleAcrylic(true)，
+				-- 若不纠正，"关掉亚克力"下次开窗就失效。这里按配置把它压回去。
+				if Window and WindUI and Window.AcrylicPaint then
+					local want = cfg.view.acrylic and true or false
+					if Window.Acrylic ~= want then
+						safe(function() WindUI:ToggleAcrylic(want) end)
+					end
 				end
 			end
 
