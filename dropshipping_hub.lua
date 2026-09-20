@@ -190,7 +190,10 @@ local DEFAULTS = {
 		on = false, interval = 5, duration = 600,
 		productMode = "跟随广告位", product = "",
 		maxCost = 0, cashFloor = 200, minLeft = 30, autoSelect = true,
+		viralFollow = false,
 	},
+	-- 保护模式：现金低于阈值时自动停掉一切花钱模块（流水线照常跑）
+	guard = { on = true, cashFloor = 150 },
 	-- 传送带（后期可升级 / 增加，最多 3 条）
 	conv = {
 		auto = true, count = 1, level = 0, maxCount = 3,
@@ -387,6 +390,59 @@ local function isInPlot(d)
 end
 
 --=====================================================================
+-- 3.5 保护模式 / 失败退避 / 会话统计
+--     （必须放在 §4 之前：§5 的补货等花钱入口都要用 guardBlock）
+--=====================================================================
+local Guard = { blocked = false }
+
+-- 现金低于阈值时停掉一切"会花钱"的模块，只保留流水线本体。
+-- 买货也一并受保护，否则低现金时越买越穷。
+local function guardRefresh()
+	local low = cfg.guard.on and (tonumber(S.cash) or 0) < (tonumber(cfg.guard.cashFloor) or 0)
+	if low ~= Guard.blocked then
+		Guard.blocked = low
+		log(low and string.format("保护模式开启：现金 %s < %s，暂停花钱模块",
+			fmt(S.cash), fmt(cfg.guard.cashFloor)) or "保护模式解除：恢复花钱模块")
+	end
+end
+local function guardBlock() return Guard.blocked end
+
+-- 有些接口会被游戏静默拒绝（研究未开放 / 今日已领 / 无办公室 / 钱不够）。
+-- 没有退避就会每个周期都发一次无效远程并刷屏日志，这里做指数退避。
+local Backoff = {}
+local function backoffWait(key)
+	local b = Backoff[key]
+	if not b then return 0 end
+	local left = b.expires - os.clock()
+	return left > 0 and left or 0
+end
+local function backoffFail(key, label)
+	local b = Backoff[key] or { fails = 0 }
+	b.fails = b.fails + 1
+	local wait = math.min(1800, 20 * (2 ^ math.min(b.fails - 1, 6)))
+	-- 注意：不能叫 b.until —— until 是 Lua 保留字，会直接语法错误
+	b.expires = os.clock() + wait
+	Backoff[key] = b
+	return string.format("%s 未被服务端接受（第 %d 次，%d 秒后重试）", label, b.fails, math.floor(wait))
+end
+local function backoffReset(key) Backoff[key] = nil end
+
+-- 会话统计：只统计"现金净增长"，用于看板的收益 / 效率指标
+local Stat = { startAt = os.clock(), lastCash = nil, gain = 0 }
+
+local function statTick()
+	local cash = tonumber(S.cash) or 0
+	if Stat.lastCash then
+		local d = cash - Stat.lastCash
+		if d > 0 then Stat.gain = Stat.gain + d end
+	end
+	Stat.lastCash = cash
+end
+local function statHours()
+	return math.max(1 / 60, (os.clock() - Stat.startAt) / 3600)
+end
+
+--=====================================================================
 -- 4. 执行引擎（传送到位 -> 触发 -> 回原位）
 --=====================================================================
 local Exe = { lastAction = 0, stats = { total = 0, fail = 0 } }
@@ -520,6 +576,7 @@ local function doRestock(force)
 	if not rem then return false, "无 BuySupply" end
 	-- ⚠ 流水线（缺货自动买货）和补货线程都会调这里，两条路径合用一个节流，
 	--   否则会在同一秒内重复下单（真花钱）。
+	if not force and guardBlock() then return false, "保护模式：现金过低，暂停买货" end
 	local now = os.clock()
 	local gap = math.max(2, (tonumber(cfg.restock.interval) or 8) * 0.5)
 	if not force and now - Rst.at < gap then
@@ -552,7 +609,7 @@ end
 --      （接口签名均实机标定，见每处注释）
 --=====================================================================
 local G = { jobs = nil, employees = nil, campaign = nil,
-	quest = nil, daily = nil, contract = nil, research = nil }
+	quest = nil, daily = nil, contract = nil, research = nil, viral = nil }
 
 local function requestJobs()
 	if Remotes and Remotes:FindFirstChild("RequestJobs") then
@@ -589,13 +646,18 @@ local function requestResearch()
 		safe(function() Remotes.ResearchRequest:FireServer() end)
 	end
 end
+local function requestViral()
+	if Remotes and Remotes:FindFirstChild("ViralRequest") then
+		safe(function() Remotes.ViralRequest:FireServer() end)
+	end
+end
 -- 这些都是「免费拉取」，和花宝石的 RefreshJobs「重掷候选」是两回事
 safe(function()
 	if not Remotes then return end
 	local pairsList = {
 		{ "JobState", "jobs" }, { "EmployeeState", "employees" }, { "CampaignState", "campaign" },
 		{ "QuestState", "quest" }, { "DailyState", "daily" }, { "ContractState", "contract" },
-		{ "ResearchState", "research" },
+		{ "ResearchState", "research" }, { "ViralState", "viral" },
 	}
 	for _, p in ipairs(pairsList) do
 		local inst = Remotes:FindFirstChild(p[1])
@@ -651,6 +713,7 @@ local function doBuyProd(dryRun)
 		else return false, string.format("有 %d 个商品，但不满足预算/白名单", #all) end
 	end
 	if dryRun then return true, string.format("将解锁 %s（%s）", c.id, fmt(c.price)) end
+	if guardBlock() then return false, "保护模式：现金过低，暂停解锁" end
 	local rem = Remotes and Remotes:FindFirstChild("UnlockProduct")
 	if not rem then return false, "无 UnlockProduct" end
 	if not canAct() then return false, "节流中" end
@@ -752,17 +815,29 @@ local function doHire(dryRun)
 	if dryRun then
 		return true, string.format("将雇佣 %s（%s · %s · %s）", target.name, target.role, tostring(target.level), fmt(target.price))
 	end
+	if guardBlock() then return false, "保护模式：现金过低，暂停招聘" end
 	local rem = Remotes and Remotes:FindFirstChild("HireEmployee")
 	if not rem then return false, "无 HireEmployee" end
 	if not canAct() then return false, "节流中" end
+	-- 回执确认：FireServer 不抛异常 ≠ 服务器受理，重新拉一次员工表比对人数
+	local before, verify = roleUsed(target.role), G.employees ~= nil
 	local ok = safe(function() rem:FireServer(target.id) end)   -- ⚠ 必须传 number
-	if ok then
+	if not ok then return false, "雇佣调用失败" end
+	if verify then
+		task.wait(0.6)
+		requestEmployees()
+		task.wait(0.4)
+	end
+	if (not verify) or roleUsed(target.role) > before then
 		Hire.count = Hire.count + 1
-		local m = string.format("雇佣 %s（%s · %s · %s）", target.name, target.role, tostring(target.level), fmt(target.price))
+		backoffReset("hire")
+		local m = verify and string.format("已雇佣 %s（%s · %s · %s）",
+			target.name, target.role, tostring(target.level), fmt(target.price))
+			or string.format("%s 已发出雇佣（未回执确认）", target.name)
 		log(m)
 		return true, m
 	end
-	return false, "雇佣失败"
+	return false, backoffFail("hire", string.format("雇佣 %s", target.name))
 end
 
 local function refreshCandidates()
@@ -787,7 +862,31 @@ end
 --   费用取 CampaignState.campaignCosts[rarity][duration]。
 local Ad = { at = 0, last = "待机", published = 0, armed = false }
 
+-- 爆款联动：ViralState 会轮换当期的爆款商品（位面 mnoznik 倍），
+-- 优先投它 —— 但只挑自己已经解锁的，否则广告面板根本不认。
+local RARITY_RANK = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6 }
+
+local function viralProduct()
+	local v = G.viral
+	if type(v) ~= "table" then return nil end
+	local owned = {}
+	for k, val in pairs(S.unlocked or {}) do if val then owned[tostring(k)] = true end end
+	local best
+	for _, p in ipairs(v.produkty or {}) do
+		local id = tostring(p.id)
+		if owned[id] then
+			local r = RARITY_RANK[tostring(p.rzadkosc)] or 0
+			if not best or r > best.r then best = { id = id, r = r } end
+		end
+	end
+	return best and best.id or nil
+end
+
 local function adProductPick()
+	if cfg.ad.viralFollow then
+		local vp = viralProduct()
+		if vp then return vp end
+	end
 	if cfg.ad.productMode == "指定" and cfg.ad.product ~= "" then return cfg.ad.product end
 	if cfg.ad.productMode == "跟随当前产品" and S.activeProduct then return tostring(S.activeProduct) end
 	if S.adProduct and tostring(S.adProduct) ~= "" then return tostring(S.adProduct) end
@@ -850,6 +949,14 @@ local function adTick()
 
 	local pid = adProductPick()
 	if not pid then Ad.last = "没有可选商品" return end
+	-- ⚠ campaignLeft 只看目标商品；别的商品占着广告位时也要拦住，
+	--   否则会反复向服务端发无效投放。CampaignState.slots 是"拥有的位数"，不是空位数。
+	local owned = tonumber((G.campaign and G.campaign.slots) or 1) or 1
+	local used = #((G.campaign and G.campaign.campaigns) or {})
+	if owned - used <= 0 and campaignLeft(pid) <= 0 then
+		Ad.last = string.format("广告位已满（%d/%d）", used, owned)
+		return
+	end
 	local left = campaignLeft(pid)
 	if left > cfg.ad.minLeft then
 		Ad.last = string.format("%s 广告剩余 %ds", pid, left)
@@ -861,11 +968,10 @@ local function adTick()
 	if cfg.ad.maxCost > 0 and cost > cfg.ad.maxCost then
 		Ad.last = string.format("花费 %d 超过上限 %d", cost, cfg.ad.maxCost) return
 	end
+	if guardBlock() then Ad.last = "保护模式：现金过低，暂停广告" return end
 	if cashNow() - cost < cfg.ad.cashFloor then
 		Ad.last = string.format("现金不足（%d，需 %d+%d）", cashNow(), cost, cfg.ad.cashFloor) return
 	end
-	local slots = tonumber((G.campaign and G.campaign.slots) or 1) or 1
-	if slots <= 0 then Ad.last = "广告位已满" return end
 
 	if cfg.ad.autoSelect then
 		local sp = Remotes and Remotes:FindFirstChild("SelectAdProduct")
@@ -932,28 +1038,65 @@ end
 
 local function opsClaimTick()
 	local did = {}
+	-- 先把"未领"的快照存下来，稍后回执比对，避免把"已发出"写成"已领取"
+	local pend = {}
+	for _, q in ipairs((G.quest and G.quest.questy) or {}) do
+		if q.completed and not q.claimed and q.uid then pend[#pend + 1] = tostring(q.uid) end
+	end
+	local tried = 0
 	if G.quest then
-		for _, q in ipairs(G.quest.questy or {}) do
-			if q.completed and not q.claimed and q.uid then
-				if fireR("QuestClaim", tostring(q.uid)) then
-					did[#did + 1] = "任务 " .. tostring(q.uid)
-				end
-			end
+		for _, uid in ipairs(pend) do
+			if fireR("QuestClaim", uid) then tried = tried + 1 end
 		end
 		if G.quest.bonusGotowy and not G.quest.bonusClaimed then
-			if fireR("QuestClaimBonus") then did[#did + 1] = "任务额外奖励" end
+			if fireR("QuestClaimBonus") then did[#did + 1] = "任务额外奖励（已发出）" end
 		end
 	end
 	if G.daily then
-		local claimed = tonumber(G.daily.claimed) or 0
-		if claimed < 1 then
-			if fireR("DailyClaim") then did[#did + 1] = "每日奖励" end
+		-- ⚠ DailyState.claimed 语义不明确（疑似"已领天数"），用它判断会在领过
+		--   一次之后永远为真。改为固定节流：每 30 分钟最多尝试一次，覆盖每日刷新。
+		local tnow = os.clock()
+		if tnow - (Ops.dailyAt or 0) >= 1800 and backoffWait("daily") <= 0 then
+			Ops.dailyAt = tnow
+			local before = tonumber(G.daily.claimed) or 0
+			fireR("DailyClaim")
+			task.wait(0.5)
+			requestDaily()
+			task.wait(0.3)
+			local after = tonumber((G.daily or {}).claimed) or 0
+			if after > before then
+				backoffReset("daily")
+				did[#did + 1] = "每日奖励"
+			end
+			-- 今天已领过也会落到 else：不是故障，30 分钟后自然再试一次
 		end
+	end
+	-- 回执确认：重新拉一次任务表，只有真的变成已领取才算数
+	if tried > 0 then
+		task.wait(0.5)
+		requestQuest()
+		task.wait(0.4)
+		local nowClaimed = {}
+		for _, q in ipairs((G.quest and G.quest.questy) or {}) do
+			if q.claimed then nowClaimed[tostring(q.uid)] = true end
+		end
+		for _, uid in ipairs(pend) do
+			if nowClaimed[uid] then did[#did + 1] = "任务 " .. uid end
+		end
+		if #did == 0 then
+			opsLog("领取", backoffFail("quest", string.format("任务领取（%d 个）", tried)))
+			return
+		end
+		backoffReset("quest")
 	end
 	opsLog("领取", #did > 0 and table.concat(did, "、") or "暂无可领取")
 end
 
 local function opsVacationTick()
+	if backoffWait("vac") > 0 then
+		opsLog("休假", string.format("退避中，%d 秒后重试", math.floor(backoffWait("vac"))))
+		return
+	end
 	local best
 	for _, e in ipairs((G.employees and G.employees.employees) or {}) do
 		local sat = tonumber(e.satisfaction) or 100
@@ -966,19 +1109,52 @@ local function opsVacationTick()
 		opsLog("休假", string.format("全队状态良好（阈值 %d）", cfg.ops.vacThreshold))
 		return
 	end
-	fireR("SendVacation", tonumber(best.id) or best.id)
-	opsLog("休假", string.format("%s 已送休假（满意度 %s）", tostring(best.name), tostring(best.satisfaction)))
+	local id = tonumber(best.id) or best.id
+	fireR("SendVacation", id)
+	-- 回执确认：休假成功会变成 vacationLeft>0 / status="On Vacation"
+	task.wait(0.6)
+	requestEmployees()
+	task.wait(0.4)
+	local now
+	for _, e in ipairs((G.employees and G.employees.employees) or {}) do
+		if tostring(e.id) == tostring(best.id) then now = e end
+	end
+	if now and (tonumber(now.vacationLeft) or 0) > 0 then
+		backoffReset("vac")
+		opsLog("休假", string.format("%s 已进入休假（满意度 %s）",
+			tostring(best.name), tostring(best.satisfaction)))
+	else
+		opsLog("休假", backoffFail("vac", string.format("%s 休假", tostring(best.name))))
+	end
 end
 
 local function opsTrainTick()
+	if backoffWait("train") > 0 then
+		opsLog("训练", string.format("退避中，%d 秒后重试", math.floor(backoffWait("train"))))
+		return
+	end
+	if guardBlock() then opsLog("训练", "保护模式：现金过低，暂停训练") return end
 	for _, e in ipairs((G.employees and G.employees.employees) or {}) do
 		local t = e.training
 		if type(t) == "table" and t.mozliwy and not t.trwa and not t.zajete then
 			local cost = tonumber(t.cena) or 0
 			if cashNow() - cost >= cfg.ops.trainFloor then
 				fireR("StartTraining", tonumber(e.id) or e.id)
-				opsLog("训练", string.format("%s 报名训练（%s -> %s，%s）",
-					tostring(e.name), tostring(e.level), tostring(t.cel), fmt(cost)))
+				-- 回执确认：训练开始后 training.trwa 会变 true
+				task.wait(0.6)
+				requestEmployees()
+				task.wait(0.4)
+				local now
+				for _, x in ipairs((G.employees and G.employees.employees) or {}) do
+					if tostring(x.id) == tostring(e.id) then now = x end
+				end
+				if now and type(now.training) == "table" and now.training.trwa then
+					backoffReset("train")
+					opsLog("训练", string.format("%s 已开始训练（%s -> %s，%s）",
+						tostring(e.name), tostring(e.level), tostring(t.cel), fmt(cost)))
+				else
+					opsLog("训练", backoffFail("train", string.format("%s 训练", tostring(e.name))))
+				end
 				return
 			end
 		end
@@ -987,29 +1163,61 @@ local function opsTrainTick()
 end
 
 local function opsResearchTick()
+	if backoffWait("research") > 0 then
+		opsLog("研究", string.format("退避中，%d 秒后重试", math.floor(backoffWait("research"))))
+		return
+	end
+	if guardBlock() then opsLog("研究", "保护模式：现金过低，暂停研究") return end
 	for _, p in ipairs((G.research and G.research.products) or {}) do
 		local lvl = tonumber(p.poziom) or 0
 		local mx = tonumber(p.max) or 3
 		local cost = tonumber(p.cenaUlepszenia) or 0
 		if lvl < mx and cashNow() - cost >= cfg.ops.researchFloor then
 			fireR("ResearchBuy", tostring(p.id))
-			opsLog("研究", string.format("%s %d/%d 尝试升级（%s）", tostring(p.id), lvl, mx, fmt(cost)))
+			-- 回执确认：等级涨了才算成功
+			task.wait(0.6)
+			requestResearch()
+			task.wait(0.4)
+			local now
+			for _, q in ipairs((G.research and G.research.products) or {}) do
+				if tostring(q.id) == tostring(p.id) then now = q end
+			end
+			if now and (tonumber(now.poziom) or 0) > lvl then
+				backoffReset("research")
+				opsLog("研究", string.format("%s 研究已升到 %s 级", tostring(p.id), tostring(now.poziom)))
+			else
+				opsLog("研究", backoffFail("research", string.format("%s 研究 %d→%d", tostring(p.id), lvl, lvl + 1)))
+			end
 			return
 		end
 	end
-	opsLog("研究", "暂无可研究项（后期内容，可能仍被门禁）")
+	opsLog("研究", "暂无可研究项（可能未开放）")
 end
 
 local function opsContractTick()
+	if backoffWait("contract") > 0 then
+		opsLog("合同", string.format("退避中，%d 秒后重试", math.floor(backoffWait("contract"))))
+		return
+	end
 	local c = G.contract
 	if not c then opsLog("合同", "无数据") return end
 	if not c.hasOffice then opsLog("合同", "未建办公室，合同系统未开放") return end
 	for _, o in ipairs(c.offers or {}) do
 		local need = tonumber(o.ilosc) or 0
 		if stockOf(tostring(o.productId)) >= need then
+			local before = #(c.offers or {})
 			fireR("ContractAccept", tonumber(o.idx) or o.idx)
-			opsLog("合同", string.format("接合同 %s（%d 件 %s）",
-				tostring(o.firma), need, tostring(o.productId)))
+			task.wait(0.6)
+			requestContract()
+			task.wait(0.4)
+			local now = G.contract
+			if now and #(now.offers or {}) ~= before then
+				backoffReset("contract")
+				opsLog("合同", string.format("已接合同 %s（%d 件 %s）",
+					tostring(o.firma), need, tostring(o.productId)))
+			else
+				opsLog("合同", backoffFail("contract", string.format("合同 %s", tostring(o.firma))))
+			end
 			return
 		end
 	end
@@ -1113,6 +1321,10 @@ local function convUpgrade()
 		return false, Conv.last
 	end
 	local price = tonumber(Conv.price) or 0
+	if guardBlock() then
+		Conv.last = "保护模式：现金过低，暂停升级"
+		return false, Conv.last
+	end
 	if cashNow() - price < cfg.conv.upgradeFloor then
 		Conv.last = string.format("现金不足（需 %s + 保留 %s）", fmt(price), fmt(cfg.conv.upgradeFloor))
 		return false, Conv.last
@@ -1358,7 +1570,7 @@ hudVisible(cfg.hud.on)
 -- 7. 订单驱动状态机
 --=====================================================================
 local Pipe = { phase = "IDLE", detail = "待机", orderId = nil, phaseAt = 0,
-	lastAccept = 0, completed = 0, seen = {} }
+	lastAccept = 0, completed = 0, seen = {}, beltTries = 0, beltUntil = 0 }
 
 local function setPhase(name, detail)
 	if Pipe.phase ~= name then
@@ -1498,7 +1710,16 @@ end
 -- 把原始包裹交给传送带（Ready to Pack 与 Being Packed 共用）
 -- ⚠ 实机标定：状态偶尔会先跳到 Being Packed，但手里的原始包裹没收走，
 --   这时必须重试上带，否则会卡死在「手里还拿着原包」的假过渡态。
+-- 但也要限次：一旦服务端长时间不收（例如卡在 Being Packed 的结算窗口），
+-- 无限重试会变成"原地反复闪现"，所以连续失败后强制冷却。
+local BELT_MAX_TRIES = 6
+local BELT_COOLDOWN  = 3
+
 local function putOnBelt()
+	if os.clock() < (Pipe.beltUntil or 0) then
+		Pipe.detail = string.format("上带冷却中（%.0fs）", Pipe.beltUntil - os.clock())
+		return false
+	end
 	local p = findPrompt("Put on conveyor", isInPlot)
 	if not p then
 		Pipe.detail = "等待传送带提示点"
@@ -1506,7 +1727,19 @@ local function putOnBelt()
 	end
 	-- 确认条件：手里那件原始包裹被服务端收走
 	local _, ok = actPrompt(p, function() return carrying() == "none" end)
-	if ok == false then Pipe.detail = "上带未被确认，下一轮重试" end
+	if ok == false then
+		Pipe.beltTries = (Pipe.beltTries or 0) + 1
+		if Pipe.beltTries >= BELT_MAX_TRIES then
+			Pipe.beltTries = 0
+			Pipe.beltUntil = os.clock() + BELT_COOLDOWN
+			Pipe.detail = string.format("上带 %d 次未生效，冷却 %ds", BELT_MAX_TRIES, BELT_COOLDOWN)
+			log(Pipe.detail)
+		else
+			Pipe.detail = string.format("上带未被确认（%d/%d），下一轮重试", Pipe.beltTries, BELT_MAX_TRIES)
+		end
+	else
+		Pipe.beltTries = 0
+	end
 	return true
 end
 
@@ -1514,6 +1747,12 @@ local function pipeTick()
 	if not cfg.pipe.on then
 		setPhase("IDLE", "流水线未启用")
 		Pipe.orderId = nil
+		return
+	end
+
+	-- 角色不在场（死亡 / 复活中）时不做任何传送与触发，等它回来
+	if not getHRP() then
+		setPhase("WAIT", "角色不在场（等待复活）")
 		return
 	end
 
@@ -1528,6 +1767,7 @@ local function pipeTick()
 	if tostring(Pipe.orderId) ~= tostring(o.id) then
 		Pipe.orderId = o.id
 		Pipe.phaseAt = os.clock()
+		Pipe.beltTries, Pipe.beltUntil = 0, 0
 		log(string.format("接手订单 #%s · %s · %s · %s$ · %s",
 			tostring(o.id), tostring(o.product), tostring(o.status),
 			tostring(o.price), o.isViral and "爆款" or "普通"))
@@ -1642,6 +1882,10 @@ local UI = { text = {} }
 local ConfigMgr = { name = nil, list = {}, lastMsg = "—" }
 
 if WindUI then
+	-- ⚠ 界面构建必须放进独立函数：整个 UI 有 60+ 个局部变量，直接摊在主 chunk
+	--   里会撞 Luau「单函数 200 个局部寄存器」上限，导致整个脚本编译失败。
+	--   包一层函数后，UI 的局部变量有自己的寄存器帧，互不挤占。
+	local function buildUI()
 	safe(function() WindUI:SetNotificationLower(true) end)
 
 	-- 外观设置先应用（建窗口时就要用）
@@ -2195,6 +2439,13 @@ if WindUI then
 	toggle(SecAd, "自动选品",
 		"投放前先调 SelectAdProduct 选中目标商品", "mouse-pointer-click", "ad_select",
 		cfg.ad.autoSelect, function(v) cfg.ad.autoSelect = v end)
+	toggle(SecAd, "爆款联动",
+		"优先投当期爆款商品（只挑已解锁的，爆款有倍率加成）", "flame", "ad_viral",
+		cfg.ad.viralFollow, function(v)
+			cfg.ad.viralFollow = v
+			requestViral()
+			Notify("自动广告", v and "已跟随当期爆款" or "已关闭爆款联动", "flame")
+		end)
 
 	local SecAd2 = TabAd:Section({ Title = "预算与节奏", Icon = "wrench", Opened = true })
 	slider(SecAd2, "单次花费上限", "超过就不投（0 = 不限）", "trending-up", "ad_maxcost",
@@ -2427,6 +2678,29 @@ if WindUI then
 		Title = "请求状态刷新", Icon = "refresh-cw",
 		Callback = function() requestState() Notify("看板", "已请求刷新", "refresh-cw") end,
 	})
+
+	local SecGuard = TabDash:Section({ Title = "保护模式与统计", Icon = "boxes", Opened = true })
+	toggle(SecGuard, "低现金自动刹车",
+		"现金低于阈值时暂停一切花钱模块（广告 / 招聘 / 研究 / 解锁 / 升级 / 买货）",
+		"boxes", "gd_on", cfg.guard.on, function(v)
+			cfg.guard.on = v
+			guardRefresh()
+			Notify("保护模式", v and "已启用" or "已关闭", "boxes")
+		end)
+	slider(SecGuard, "刹车现金线", "低于此现金就刹车，只保留流水线", "banknote", "gd_floor",
+		cfg.guard.cashFloor, 0, 100000, 50, function(v) cfg.guard.cashFloor = v guardRefresh() end)
+	mk("Button", SecGuard, {
+		Title = "重置本次会话统计", Icon = "rotate-ccw",
+		Callback = function()
+			Stat.startAt, Stat.gain, Stat.lastCash = os.clock(), 0, nil
+			Exe.stats.total, Exe.stats.fail = 0, 0
+			Notify("看板", "会话统计已重置", "rotate-ccw")
+		end,
+	})
+	UI.dStat = para(SecGuard, "运行统计", "—", "activity")
+	UI.dEcon = para(SecGuard, "收益效率", "—", "trending-up")
+	UI.dFail = para(SecGuard, "动作确认率", "—", "check-check")
+	UI.dViral = para(SecGuard, "当期爆款", "—", "flame")
 
 	---------------------------------------------------------------------
 	-- Tab 10 · 外观（WindUI 原生外观能力）
@@ -2768,6 +3042,10 @@ if WindUI then
 		tostring(ConfigMgr.name), #ConfigMgr.list))
 	safe(function() UI.setText(UI.pTheme, tostring(WindUI:GetCurrentTheme())) end)
 	log("WindUI 界面已建立 · 主题 " .. tostring(cfg.view.theme) .. " · 产品 " .. #prodVals .. " 种")
+	end
+	-- 界面构建失败也不影响自动化：悬浮看板与三条线程照常跑
+	local okUI, errUI = pcall(buildUI)
+	if not okUI then log("界面构建异常: " .. tostring(errUI)) end
 end
 
 --=====================================================================
@@ -2798,10 +3076,20 @@ end)
 
 -- 线程 D：自动购买（商品解锁 / 员工招聘 / 广告投放 / 传送带 / AI 调参）
 task.spawn(function()
-	local tB, tH, tConv = 0, 0, 0
+	local tB, tH, tConv, tViral = 0, 0, 0, 0
 	while ENABLED and STATE.alive() do
 		task.wait(0.25)
 		local now = os.clock()
+
+		-- 每轮先刷新保护模式与会话统计（看板与所有花钱模块都依赖它）
+		safe(guardRefresh)
+		safe(statTick)
+
+		-- 爆款轮换是慢变量，60s 拉一次足够
+		if now - tViral >= 60 then
+			tViral = now
+			requestViral()
+		end
 
 		if cfg.hire.on and now - tH >= cfg.hire.interval then
 			tH = now
@@ -2887,9 +3175,10 @@ task.spawn(function()
 					HUD.row.mode.Text = string.format("传送带 %d 条·Lv%d ｜ AI %s ｜ 回位 %s",
 						cfg.conv.count, cfg.conv.level,
 						cfg.ai.on and "开" or "关", cfg.pipe.restore and "开" or "关")
-					HUD.row.buy.Text = string.format("购买 商品%d(%s) 员工%d(%s)",
+					HUD.row.buy.Text = string.format("购买 商品%d(%s) 员工%d(%s)%s",
 						BuyProd.count, cfg.buyprod.on and "开" or "关",
-						Hire.count, cfg.hire.on and "开" or "关")
+						Hire.count, cfg.hire.on and "开" or "关",
+						Guard.blocked and "  刹车中" or "")
 					HUD.row.ad.Text = "广告 " .. (cfg.ad.on and Ad.last or "关")
 				end)
 			end
@@ -2920,6 +3209,30 @@ task.spawn(function()
 					Conv.price and fmt(Conv.price) or "—",
 					Conv.prompt and (Conv.prompt.Enabled and "可升级" or "未开放") or "无升级点"))
 				t(UI.pConvLog, Conv.last or "—")
+
+				-- 会话统计 / 收益效率 / 动作确认率 / 当期爆款
+				local mins = math.floor((os.clock() - Stat.startAt) / 60)
+				t(UI.dStat, string.format("会话 %d 分 ｜ 完成 %d 单 ｜ 现金 %s ｜ 宝石 %s ｜ %s",
+					mins, Pipe.completed, fmt(S.cash), fmt(S.gems),
+					Guard.blocked and "保护模式中" or "正常"))
+				t(UI.dEcon, string.format("毛收入累计 %s ｜ 约 %s/小时 ｜ 单均 %s",
+					fmt(Stat.gain), fmt(Stat.gain / statHours()),
+					Pipe.completed > 0 and fmt(Stat.gain / math.max(1, Pipe.completed)) or "—"))
+				local tot, bad = Exe.stats.total, Exe.stats.fail
+				t(UI.dFail, tot > 0
+					and string.format("确认 %d 次 · 通过 %d · 失败率 %.0f%%", tot, tot - bad, bad / tot * 100)
+					or "暂无样本（有确认条件的动作才会统计）")
+				do
+					local v = G.viral
+					local vp = viralProduct()
+					local names = {}
+					for _, p in ipairs((v and v.produkty) or {}) do
+						names[#names + 1] = tostring(p.nazwa or p.id)
+					end
+					t(UI.dViral, #names > 0
+						and (table.concat(names, " / ") .. (vp and ("　可投：" .. vp) or "　（均未解锁）"))
+						or "无数据（需打开一次爆款面板）")
+				end
 				t(UI.dCash, fmt(S.cash))
 				t(UI.dGems, fmt(S.gems))
 				t(UI.dWear, string.format("%d / %s（库存 %d）", wh,
