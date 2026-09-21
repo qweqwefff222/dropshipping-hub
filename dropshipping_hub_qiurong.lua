@@ -1776,32 +1776,50 @@ local function tryAutoAccept()
 end
 
 local function doneBoxPrompt()
+	-- ⚠ 实机标定：地块里可能同时有【多个】Package 模型——
+	--   一个是正在打包/已到带末的（可取），另一个是已交到快递员台、等 NPC 取走的（Enabled=false）。
+	--   旧写法 FindFirstChild("Package", true) 只拿第一个，拿到快递员台那个就永远"打包中…"，
+	--   这就是「包裹到取件点了却不取」的概率性根因（概率 = 上一个包裹是否还停在快递员台上）。
+	--   所以这里要扫全部 Package 模型，并跳过停在快递员台上的。
 	local plot = getPlot()
-	if not plot then return nil end
-	local pkg = plot:FindFirstChild("Package", true)
-	if not pkg then return nil end
-	-- ⚠ 实机标定（v3.2）：成品箱会沿传送带移动，服务端只在箱子「到达末端」
-	--   所以这里必须只认 Enabled=true —— 绝不能强行启用它，
-	for _, d in ipairs(pkg:GetDescendants()) do
-		if d:IsA("ProximityPrompt") and d.Enabled
-			and (d.ActionText == "Pick up package" or d.ActionText == "") then
-			return d
+	if not plot then return nil, nil end
+	local pad = plot:FindFirstChild("CourierPickupPad")
+	local padPos = (pad and pad:IsA("BasePart")) and pad.Position or nil
+	local best, bestPkg, bestDist
+	for _, pkg in ipairs(plot:GetDescendants()) do
+		if pkg.Name == "Package" and pkg:IsA("Model") then
+			if padPos then
+				local pp = pkg.PrimaryPart or pkg:FindFirstChildWhichIsA("BasePart")
+				if pp and (pp.Position - padPos).Magnitude < 6 then
+					continue    -- 已交付、停在快递员台上的，跳过
+				end
+			end
+			-- ⚠ 实机标定（v3.2）：成品箱沿传送带移动，服务端只在箱子「到达末端」才置 Enabled=true，
+			--   绝不能强行启用它。
+			for _, d in ipairs(pkg:GetDescendants()) do
+				if d:IsA("ProximityPrompt") and d.Enabled
+					and (d.ActionText == "Pick up package" or d.ActionText == "") then
+					local bp = d.Parent
+					local dist = (bp and bp:IsA("BasePart")) and bp.Position.Magnitude or math.huge
+					if not best or dist < bestDist then best, bestPkg, bestDist = d, pkg, dist end
+				end
+			end
 		end
 	end
-	return nil
+	return best, bestPkg
 end
 
-local function doneBoxCustomer()
-	local plot = getPlot()
-	if not plot then return nil end
-	local pkg = plot:FindFirstChild("Package", true)
+local function doneBoxCustomer(pkg)
+	-- 读取指定 Package 的客户名（由 doneBoxPrompt 一并返回，避免再拿错模型）
 	if not pkg then return nil end
 	for _, box in ipairs(pkg:GetChildren()) do
 		local tag = box:FindFirstChild("Tag")
 		local t = tag and tag:FindFirstChild("Text")
 		if t and t:IsA("TextLabel") then return t.Text end
 	end
-	return nil
+	local lab = pkg:FindFirstChild("Label", true)
+	local lt = lab and lab:FindFirstChild("Text", true)
+	return lt and lt:IsA("TextLabel") and lt.Text or nil
 end
 
 -- ⚠ 完成的订单会离开履约集合，currentOrder() 不再返回它，所以必须独立扫描，
@@ -1929,9 +1947,9 @@ local function pipeTick()
 			putOnBelt()
 		else
 			setPhase("FETCH_DONE", "取成品箱")
-			local p = doneBoxPrompt()
+			local p, pkg = doneBoxPrompt()
 			if p then
-				local who = doneBoxCustomer()
+				local who = doneBoxCustomer(pkg)
 				Pipe.detail = "取成品箱" .. (who and ("（" .. who .. "）") or "")
 				actPrompt(p, function() return carrying() == "labeled" end)
 			else
@@ -2012,7 +2030,7 @@ local ChatPollThread = nil
         Author = "合作:b站大不列颠超入",
         GuiName = "DropshipHubUI",
         DefaultPage = "about",
-        MarqueeText = "大不列颠超入脚本-代发货大亨 | 合作:b站大不列颠超入 | 交流群 1105244454",
+        MarqueeText = "合作作品 · 祝你使用愉快",
                 AnnouncementTitle = "公告详情",
         AnnouncementText = [=[
 
@@ -4752,7 +4770,7 @@ local ChatPollThread = nil
 
         local contentLayout = New("UIListLayout", {
             Padding = UDim.new(0, 8),
-            Parent = sf,
+            Parent = content,
         })
 
         local collapsed = State.Collapsed[item.key] == true
@@ -5637,7 +5655,8 @@ function AddPage(page)
                 task.defer(function()
                     if token ~= UI.VisibleToken then return end
                     Tween(UI.Main, {
-                        Size = UI._savedWindowSize or UDim2.fromOffset(760, 500),
+                        Size = (UI._savedWindowSize and UI._savedWindowSize.X.Offset > 120 and UI._savedWindowSize.Y.Offset > 80)
+                            and UI._savedWindowSize or UDim2.fromOffset(760, 500),
                     }, Theme.Animation.Slow, Enum.EasingStyle.Back)
                 end)
             end
@@ -5653,7 +5672,12 @@ function AddPage(page)
             end
         else
             if UI.Main then
-                UI._savedWindowSize = UI.Main.Size
+                do
+                    local sz = UI.Main.Size
+                    if sz.X.Offset > 120 and sz.Y.Offset > 80 then
+                        UI._savedWindowSize = sz
+                    end
+                end
                 Tween(UI.Main, {
                     Size = UDim2.fromOffset(1, 1),
                 }, Theme.Animation.Normal)
@@ -8490,7 +8514,6 @@ task.spawn(function()
 				setclipboard and "有" or "无", writefile and "有" or "无", game.HttpGet and "有" or "无"))
 			qrSet("qr.tool.hints", tostring(#Prompt.list) .. " 个可用提示点")
 		end
-
 
 			local ping = 0
 			safe(function() ping = math.floor(plr:GetNetworkPing() * 1000) end)
