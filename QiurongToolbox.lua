@@ -1,5 +1,5 @@
 --[[
-	QiurongToolbox v1.0.0  ·  秋容工具箱
+	QiurongToolbox v1.1.0  ·  秋容工具箱
 	====================================
 	基于《Roblox UI 三套静态视觉样本》(sample-*.png / generate_samples.py shared-v1 布局)
 	实现的 Roblox 原生 UI 库，WindUI 式链式 builder 风格：
@@ -15,27 +15,66 @@
 			Marquee     = "作者：秋容 · 求点赞关注，谢谢支持 · 脚本一直爽，封号两行泪",
 			NoticeBadge = "置顶公告",
 			ToggleKey   = Enum.KeyCode.RightShift, -- 呼出/隐藏窗口
+			Folder      = "QiurongToolbox",        -- 配置保存目录（writefile 存在时启用持久化）
+			CloseAction = "hide",                  -- "hide"=关闭可重开(悬浮球) | "destroy"=直接销毁
+			OpenButton  = { Title = "打开工具箱", OnlyMobile = true, Draggable = true },
+			KeySystem   = {                        -- 可选：卡密门禁
+				KeyValidator = function(k) return k == "1234" end,
+				Note = "请输入卡密", SaveKey = true,
+			},
 			OnClose     = function() end,
 		}
 
 		local Tab = Window:Tab{ Title = "菜单 01", Subtitle = "RELEASE NOTES · 版本 v2.3.0", Badge = "正式版本" }
 		local Sec = Tab:Section("功能更新公告")
 
-		Sec:Paragraph{ Title = "2.3.0", Badge = "本次更新", Desc = { "启动、加载与窗口适配升级", "让高频操作更稳定、更顺畅。" } }
+		Sec:Paragraph{ Title = "2.3.0", Badge = "本次更新", Desc = { "启动、加载与窗口适配升级" } }
 		Sec:Stat{ Number = "3", Label = "新增功能" }
-		Sec:Card{ Key = "新", Title = "新增", Color = "good", Bullets = { "新增快捷启动面板", "新增配置恢复入口" } }
+		Sec:Card{ Key = "新", Title = "新增", Color = "good", Bullets = { "新增快捷启动面板" } }
 		Sec:Toggle{ Title = "自动开始", Default = false, Flag = "AutoStart", Callback = function(v) end }
-		Sec:Slider{ Title = "延迟", Min = 0, Max = 10, Step = 0.1, Default = 1, Callback = function(v) end }
-		Sec:Dropdown{ Title = "目标", Options = { "A", "B" }, Default = "A", Callback = function(v) end }
+		Sec:Slider{ Title = "延迟", Min = 0, Max = 10, Step = 0.1, Default = 1, Flag = "Delay", Callback = function(v) end }
+		Sec:Dropdown{ Title = "目标", Options = { "A", "B" }, Default = "A", Flag = "Target", Callback = function(v) end }
+		Sec:ColorPicker{ Title = "颜色", Default = Color3.fromRGB(57,200,255), Flag = "Color", Callback = function(c) end }
 		Sec:Button{ Title = "执行", Callback = function() end }
-		Sec:Input{ Title = "备注", Placeholder = "输入..." }
+		Sec:Input{ Title = "备注", Placeholder = "输入...", Flag = "Note" }
 
-		Window:SelectTab(tabId)  Window:Notify("标题", "内容")  Window:Dialog{ ... }
-		Lib.Flags["AutoStart"]:Get() / :Set(v)   Lib:SetTheme("premium-dark")
+	-- 主题（WindUI 对齐）
+	Lib:GetCurrentTheme()                        -- 当前主题名
+	Lib:GetThemes()                              -- { {Id, Name}, ... }
+	Lib:AddTheme("my-theme", { accent = C("#FF0000"), ... })  -- 自定义主题（缺省 token 继承 tech-glass）
+	Lib:SetTheme("my-theme")   Window:SetTheme("my-theme")
+	-- 顶栏 "◐" 按钮：循环切换主题；配置持久化会记住所选主题
+
+	-- 配置保存（带 Flag 的控件自动持久化到 Folder/config.json）
+	Lib:SaveConfig("备份1")   Lib:LoadConfig("备份1")   Lib:DeleteConfig("备份1")
+	Lib:GetConfigs()          -- { "备份1", ... }
+
+	-- 控件句柄（全部控件通用）
+	local h = Sec:Toggle{...}
+	h:Get() / h:Set(v)          -- Set 不触发 Callback（h:Set(v, true) 强制触发）
+	h:SetTitle("新标题") / h:SetDesc("新描述")
+	h:Lock() / h:Unlock()       -- 禁用/启用交互
+	h:Highlight()               -- 高亮闪烁提示
+	h:Destroy()                 -- 移除该控件
+	-- Slider 另有 h:SetMin(n) / h:SetMax(n)
+	-- Dropdown 另有 h:Select(v)（触发回调）/ h:SetOptions(list) / AllowNone / SearchBarEnabled
+	-- ColorPicker 另有 h:Set(color3, transparency?)
+
+	-- 窗口方法
+	Window:SetTitle("新标题") / SetAuthor("副标题") / SetIcon("新")
+	Window:SetSize(w, h) / SetToggleKey(Enum.KeyCode.K) / SetUIScale(1.2) / GetUIScale()
+	Window:GetWindowSize() / IsResizable() / SetBackgroundTransparency(0~1)
+	Window:Show() / Hide() / ToggleVisibility() / ToggleCollapse()
+	Window:Notify("标题", "内容") / Notify{ Title=, Content=, Icon="✓", Duration=5 }
+	Window:Dialog{ Title=, Content=, Buttons={ {Title="确定", Variant="Primary", Callback=fn}, ... } }
 
 	18 种样本规格均落实：三主题 token、箭头菜单、跑马灯、统计格、分类卡、
 	分类分页栏、展开/收起把手、缩放角标；桌面/手机横屏双布局（正文≥14 菜单≥15 标题≥20，热区≥44）。
+	注：WindUI 的 SetFont / Localization / Acrylic / 背景视频 不在样本规范内，未实现。
 ]]
+
+-- 前置声明（必须先于 CreateWindow 定义：CreateWindow 体内引用 WinMT/TabMT，
+-- 词法作用域在编译期解析，后置 local 会让它变成全局引用 → setmetatable({}, nil) 致命）
 
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
@@ -81,13 +120,20 @@ local THEMES = {
 	},
 }
 
+local WinMT = {}
+local TabMT = {}
+
 local Lib = {
-	Version = "1.0.0",
+	Version = "1.1.0",
 	ThemeName = "tech-glass",
 	Flags = {},
 	_Windows = {},
-	_Binds = {},   -- { {inst, prop, token, aux} } 主题换色绑定
+	_Binds = {},   -- { {inst, prop, token | get} } 主题换色绑定（token 静态 / get 动态函数）
 	Seq = 0,
+	Folder = "QiurongToolbox",   -- 配置目录（CreateWindow 可覆盖）
+	_Pending = nil,              -- 启动时读到的持久化配置（flag -> 值）
+	_Loading = false,            -- 配置回灌期间抑制回调
+	_autoSave = true,            -- Flag 值变化自动保存
 }
 Lib._GName = "QiurongToolbox"
 
@@ -115,21 +161,50 @@ function Lib:Bind(inst, prop, token)
 	end
 end
 
+-- 动态 token 绑定：getFn 返回当前应使用的 token 名（用于选中态等状态色，随 SetTheme 重算）
+function Lib:BindFn(inst, prop, getFn)
+	if not TOKEN_COLOR_PROPS[prop] and prop ~= "UIGradient" then return end
+	table.insert(self._Binds, { inst = inst, prop = prop, get = getFn })
+	self:_applyBind(self._Binds[#self._Binds])
+end
+
+function Lib:_applyBind(b)
+	local t = self:Theme()
+	if b.get then b.token = b.get() end
+	local token = b.token
+	if not t[token] then return end
+	pcall(function()
+		if b.prop == "UIGradient" then
+			b.inst.Color = ColorSequence.new(t[token], t[token])
+		else
+			b.inst[b.prop] = t[token]
+		end
+	end)
+end
+
 function Lib:SetTheme(name)
 	if not THEMES[name] then return false end
 	self.ThemeName = name
 	local t = THEMES[name]
+	-- 惰性回收：实例已销毁（Parent=nil）的绑定清掉，防止长会话累积
+	local alive = {}
 	for _, b in ipairs(self._Binds) do
-		if b.inst.Parent then
-			pcall(function()
-				if b.prop == "UIGradient" then
-					b.inst.Color = ColorSequence.new(t[b.token], t[b.token])
-				else
-					b.inst[b.prop] = t[b.token]
-				end
-			end)
+		if b.inst and b.inst.Parent then
+			alive[#alive + 1] = b
+			if b.get then b.token = b.get() end
+			local token = b.token
+			if t[token] then
+				pcall(function()
+					if b.prop == "UIGradient" then
+						b.inst.Color = ColorSequence.new(t[token], t[token])
+					else
+						b.inst[b.prop] = t[token]
+					end
+				end)
+			end
 		end
 	end
+	self._Binds = alive
 	for _, win in ipairs(self._Windows) do
 		if win.RefreshTheme then pcall(win.RefreshTheme, win) end
 	end
@@ -139,7 +214,144 @@ end
 function Lib:GetThemes()
 	local list = {}
 	for k, v in pairs(THEMES) do table.insert(list, { Id = k, Name = v.name }) end
+	table.sort(list, function(a, b) return a.Id < b.Id end)
 	return list
+end
+
+function Lib:GetCurrentTheme()
+	return self.ThemeName
+end
+
+-- 注册自定义主题：tokens 只需给出要覆盖的 token，缺省继承 tech-glass 基准
+function Lib:AddTheme(id, tokens)
+	if type(id) ~= "string" or id == "" or type(tokens) ~= "table" then return false end
+	local base = THEMES["tech-glass"]
+	local merged = {}
+	for k, v in pairs(base) do merged[k] = v end
+	for k, v in pairs(tokens) do merged[k] = v end
+	merged.name = tokens.name or tostring(id)
+	THEMES[id] = merged
+	return true
+end
+
+-- ===== 配置持久化（Folder + Flag，WindUI 对齐） =====
+local function fsAvailable()
+	return type(writefile) == "function" and type(readfile) == "function"
+end
+
+local function fsPath(lib, name)
+	if name and name ~= "" and name ~= "config" then
+		return tostring(lib.Folder) .. "/config_" .. tostring(name) .. ".json"
+	end
+	return tostring(lib.Folder) .. "/config.json"
+end
+
+function Lib:SaveConfig(name)
+	if not fsAvailable() then return false, "当前环境无 writefile/readfile" end
+	local ok, err = pcall(function()
+		if isfolder and type(isfolder) == "function" then
+			if not isfolder(self.Folder) then makefolder(self.Folder) end
+		else
+			makefolder(self.Folder)
+		end
+	end)
+	if not ok then return false, "无法创建配置目录: " .. tostring(err) end
+	local snap = { _theme = self.ThemeName, flags = {} }
+	for k, h in pairs(self.Flags) do
+		local v = h.Get()
+		local tv = type(v)
+		if tv == "table" then
+			local arr = {}
+			for val in pairs(v) do table.insert(arr, tostring(val)) end
+			table.sort(arr)
+			snap.flags[k] = { t = h.Type, v = arr }
+		elseif tv == "userdata" and typeof and typeof(v) == "Color3" then
+			snap.flags[k] = { t = "color", v = string.format("%.6f,%.6f,%.6f", v.R, v.G, v.B) }
+		elseif tv == "userdata" and typeof and typeof(v) == "EnumItem" then
+			snap.flags[k] = { t = "keybind", v = v.Name }
+		elseif tv == "string" or tv == "number" or tv == "boolean" then
+			snap.flags[k] = { t = h.Type, v = v }
+		end
+	end
+	local jok, json = pcall(function() return HttpService:JSONEncode(snap) end)
+	if not jok then return false, "配置序列化失败" end
+	local wok, werr = pcall(writefile, fsPath(self, name), json)
+	if not wok then return false, "配置写入失败: " .. tostring(werr) end
+	return true
+end
+
+local function decodeSnapshot(json)
+	local ok, data = pcall(function() return HttpService:JSONDecode(json) end)
+	if not ok or type(data) ~= "table" then return nil end
+	return data
+end
+
+function Lib:LoadConfig(name)
+	if not fsAvailable() then return false, "当前环境无 writefile/readfile" end
+	local rok, json = pcall(readfile, fsPath(self, name))
+	if not rok then return false, "配置不存在: " .. tostring(name or "config") end
+	local snap = decodeSnapshot(json)
+	if not snap then return false, "配置解析失败" end
+	if snap._theme and THEMES[snap._theme] then self:SetTheme(snap._theme) end
+	local flags = snap.flags
+	if type(flags) ~= "table" then return true end
+	for k, ent in pairs(flags) do
+		local h = self.Flags[k]
+		if h and type(ent) == "table" then
+			local v = ent.v
+			if h.Type == "multi" then
+				local set = {}
+				if type(v) == "table" then
+					for _, x in ipairs(v) do set[tostring(x)] = true end
+				end
+				h:Set(set)
+			elseif h.Type == "keybind" then
+				local okk, kc = pcall(function() return Enum.KeyCode[tostring(v)] end)
+				if okk and kc then h:Set(kc) end
+			elseif h.Type == "color" then
+				local r, g, b = tostring(v):match("([%-%d%.]+),([%-%d%.]+),([%-%d%.]+)")
+				if r then h:Set(Color3.new(tonumber(r) or 1, tonumber(g) or 1, tonumber(b) or 1)) end
+			else
+				pcall(function() h:Set(v) end)
+			end
+		end
+	end
+	return true
+end
+
+function Lib:DeleteConfig(name)
+	if not fsAvailable() or type(delfile) ~= "function" then return false end
+	local ok = pcall(delfile, fsPath(self, name))
+	return ok
+end
+
+function Lib:GetConfigs()
+	local list = {}
+	if not fsAvailable() or type(listfiles) ~= "function" then return list end
+	local ok, files = pcall(listfiles, tostring(self.Folder))
+	if ok and type(files) == "table" then
+		for _, f in ipairs(files) do
+			local base = tostring(f):match("([^/\\]+)$") or tostring(f)
+			if base == "config.json" then
+				table.insert(list, "config")
+			else
+				local n = base:match("^config_(.+)%.[jJ][sS][oO][nN]$")
+				if n then table.insert(list, n) end
+			end
+		end
+	end
+	table.sort(list)
+	return list
+end
+
+function Lib:_autoSave()
+	if not self._autoSave then return end
+	if self._saveQueued then return end
+	self._saveQueued = true
+	task.delay(0.6, function()
+		self._saveQueued = false
+		pcall(function() self:SaveConfig() end)
+	end)
 end
 
 -- ===== 构建工具 =====
@@ -168,7 +380,9 @@ local function Stroke(parent, token, thickness, transparency, lib)
 		Transparency = transparency or 0,
 		Parent = parent,
 	})
-	if lib then lib:Bind(s, "Color", token or "line") else s.Color = C("#2B6076") end
+	-- 漏传 lib 时回落到主 Lib：描边色一律跟随主题，避免散落固定色
+	local l = lib or Lib
+	l:Bind(s, "Color", token or "line")
 	return s
 end
 
@@ -231,15 +445,92 @@ end
 -- ===== 值仓与句柄 =====
 local Values = {}  -- key -> value（库级，控件状态唯一来源）
 
-local function makeHandle(lib, o, kind, get, set)
-	local h = { Type = kind, Key = o and o.Flag or nil }
+-- 交互后挂自动保存（回灌期间抑制）
+local function saveHook(lib)
+	if not lib._Loading then pcall(function() lib:_autoSave() end) end
+end
+
+local function makeHandle(lib, o, kind, get, set, refs)
+	refs = refs or {}
+	local h = { Type = kind, Key = o and o.Flag or nil, _locked = false }
 	function h.Get()
 		return get()
 	end
-	function h:Set(v)
-		set(v)
+	function h:Set(v, fire)
+		if fire == nil then fire = true end
+		if lib._Loading then fire = false end
+		set(v, fire)
+		if fire then saveHook(lib) end
 	end
-	if o and o.Flag then lib.Flags[tostring(o.Flag)] = h end
+	function h:SetTitle(v)
+		if refs.title then refs.title.Text = tostring(v) end
+	end
+	function h:SetDesc(v)
+		if refs.desc then
+			if v == nil or v == "" then
+				refs.desc.Visible = false
+			else
+				refs.desc.Visible = true
+				refs.desc.Text = tostring(v)
+			end
+		end
+	end
+	local lockBtn
+	function h:Lock()
+		if not lockBtn then
+			lockBtn = New("TextButton", {
+				BackgroundTransparency = 1, Text = "",
+				Size = UDim2.fromScale(1, 1), ZIndex = 50,
+				Parent = refs.card,
+			})
+		end
+		lockBtn.Visible = true
+		if refs.title then refs.title.TextTransparency = 0.55 end
+		h._locked = true
+	end
+	function h:Unlock()
+		if lockBtn then lockBtn.Visible = false end
+		if refs.title then refs.title.TextTransparency = 0 end
+		h._locked = false
+	end
+	function h:Highlight()
+		local st = refs.stroke
+		if not st or not st.Parent then return end
+		st.Color = lib:Theme().accent
+		st.Thickness = 2
+		task.delay(0.45, function()
+			if st and st.Parent then
+				st.Thickness = 1
+				st.Color = lib:Theme()[refs.strokeToken or "line"]
+			end
+		end)
+	end
+	function h:Destroy()
+		if refs.card then refs.card:Destroy() end
+		if o and o.Flag and lib.Flags[tostring(o.Flag)] == h then
+			lib.Flags[tostring(o.Flag)] = nil
+		end
+	end
+	if o and o.Flag then
+		lib.Flags[tostring(o.Flag)] = h
+		-- 启动回灌：持久化配置里有该 Flag 的已保存值 → 静默应用（不触发回调）
+		local pend = lib._Pending and lib._Pending[tostring(o.Flag)]
+		if type(pend) == "table" and pend.v ~= nil or type(pend) == "boolean" then
+			local pval = type(pend) == "table" and pend.v or pend
+			-- 类型适配：keybind 名字→EnumItem，color 字符串→Color3
+			if kind == "keybind" and type(pval) == "string" then
+				local okk, kc = pcall(function() return Enum.KeyCode[pval] end)
+				if okk and kc then pval = kc end
+			elseif kind == "color" and type(pval) == "string" then
+				local r, g, b = tostring(pval):match("([%-%d%.]+),([%-%d%.]+),([%-%d%.]+)")
+				if r then pval = Color3.new(tonumber(r) or 1, tonumber(g) or 1, tonumber(b) or 1) end
+			end
+			local was = lib._Loading
+			lib._Loading = true
+			pcall(function() h:Set(pval, false) end)
+			lib._Loading = was
+		end
+	end
 	return h
 end
 
@@ -269,8 +560,9 @@ local function rowCard(sec, o, baseH)
 	})
 	sec._order = (sec._order or 0) + 1
 	Corner(card, 12)
-	Stroke(card, "line", 1)
+	local cardSt = Stroke(card, "line", 1)
 	lib:Bind(card, "BackgroundColor3", "panel")
+	local refs = { card = card, stroke = cardSt, strokeToken = "line" }
 	if hasDesc then
 		local title = New("TextLabel", {
 			BackgroundTransparency = 1, Position = UDim2.fromOffset(14, 8),
@@ -289,6 +581,8 @@ local function rowCard(sec, o, baseH)
 			Text = tostring(o.Desc or o.desc), Parent = card,
 		})
 		lib:Bind(desc, "TextColor3", "muted")
+		refs.title = title
+		refs.desc = desc
 	else
 		local title = New("TextLabel", {
 			BackgroundTransparency = 1, Position = UDim2.fromOffset(14, 0),
@@ -298,13 +592,14 @@ local function rowCard(sec, o, baseH)
 			Text = tostring(o.Title or o.title or ""), Parent = card,
 		})
 		lib:Bind(title, "TextColor3", "text")
+		refs.title = title
 	end
 	local right = New("Frame", {
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0),
 		Size = UDim2.fromOffset(84, h - 12), Parent = card,
 	})
-	return card, right
+	return card, right, refs
 end
 
 -- ===== 控件工厂（每个独立函数，隔离寄存器帧） =====
@@ -318,7 +613,7 @@ local function ctlButton(sec, o)
 	})
 	sec._order = (sec._order or 0) + 1
 	Corner(card, 12)
-	Stroke(card, "line", 1)
+	local cardSt = Stroke(card, "line", 1)
 	lib:Bind(card, "BackgroundColor3", "panel2")
 	local title = New("TextLabel", {
 		BackgroundTransparency = 1, Size = UDim2.new(1, -20, 1, 0), Position = UDim2.fromOffset(14, 0),
@@ -334,61 +629,88 @@ local function ctlButton(sec, o)
 	})
 	lib:Bind(arrow, "TextColor3", "accent2")
 	arrow.Parent = card
+	local btnLock = false
 	card.MouseButton1Click:Connect(function()
+		if btnLock then return end
 		if o.Callback then
 			local ok, err = pcall(o.Callback)
 			if not ok then warn("[QiurongToolbox] Button 回调出错: " .. tostring(err)) end
 		end
 	end)
-	return card
+	local h = makeHandle(lib, o, "button",
+		function() return nil end,
+		function() end,
+		{ card = card, title = title, stroke = cardSt })
+	function h:Lock() btnLock = true if title then title.TextTransparency = 0.55 end h._locked = true end
+	function h:Unlock() btnLock = false if title then title.TextTransparency = 0 end h._locked = false end
+	return h
 end
 
 local function ctlToggle(sec, o)
 	local lib, ctx = sec.lib, sec.ctx
 	local t = lib:Theme()
-	local card, right = rowCard(sec, o, ctx.M.ctlH)
+	local card, right, refs = rowCard(sec, o, ctx.M.ctlH)
 	local key = "toggle." .. tostring(o.Flag or (function() lib.Seq += 1 return "auto" .. lib.Seq end)())
 	local val = (o.Default == true)
 	Values[key] = val
-	local track = New("Frame", {
-		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
-		Size = UDim2.fromOffset(42, 24), BackgroundColor3 = val and t.accent or t.panel3,
-		Parent = right,
-	})
-	lib:Bind(track, "BackgroundColor3", val and "accent" or "panel3")
-	Corner(track, 12)
-	Stroke(track, "line", 1)
-	local knob = New("Frame", {
-		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(val and 1 or 0, val and -3 or 3, 0.5, 0),
-		Size = UDim2.fromOffset(18, 18), BackgroundColor3 = t.text, Parent = track,
-	})
-	lib:Bind(knob, "BackgroundColor3", "text")
-	Corner(knob, 9)
-	local btn = New("TextButton", {
-		BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Text = "", Parent = track,
+	local isCheckbox = (o.Type == "Checkbox")
+	local track, knob, boxLbl
+	if isCheckbox then
+		boxLbl = New("TextLabel", {
+			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
+			Size = UDim2.fromOffset(30, 30), BackgroundTransparency = 1,
+			Font = Enum.Font.GothamBold, TextSize = 20,
+			Text = val and "☑" or "☐", Parent = right,
+		})
+		lib:Bind(boxLbl, "TextColor3", "accent")
+	else
+		track = New("Frame", {
+			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
+			Size = UDim2.fromOffset(42, 24), BackgroundColor3 = t.accent,
+			Parent = right,
+		})
+		-- 动态 token 绑定：开/关态随 SetTheme 正确重刷（修复旧版重复 Bind 累积泄漏）
+		lib:BindFn(track, "BackgroundColor3", function() return Values[key] and "accent" or "panel3" end)
+		Corner(track, 12)
+		Stroke(track, "line", 1)
+		knob = New("Frame", {
+			AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(val and 1 or 0, val and -3 or 3, 0.5, 0),
+			Size = UDim2.fromOffset(18, 18), BackgroundColor3 = t.text, Parent = track,
+		})
+		lib:Bind(knob, "BackgroundColor3", "text")
+		Corner(knob, 9)
+	end
+	local clickBtn = New("TextButton", {
+		BackgroundTransparency = 1, Text = "",
+		Size = UDim2.fromScale(1, 1), ZIndex = 5, Parent = right,
 	})
 	local function apply(v, fire)
 		Values[key] = v
-		lib:Bind(track, "BackgroundColor3", v and "accent" or "panel3")
-		TweenService:Create(knob, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Position = UDim2.new(v and 1 or 0, v and -3 or 3, 0.5, 0),
-		}):Play()
+		if isCheckbox then
+			boxLbl.Text = v and "☑" or "☐"
+		else
+			track.BackgroundColor3 = lib:Theme()[v and "accent" or "panel3"]
+			TweenService:Create(knob, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Position = UDim2.new(v and 1 or 0, v and -3 or 3, 0.5, 0),
+			}):Play()
+		end
 		if fire and o.Callback then
 			local ok, err = pcall(o.Callback, v)
 			if not ok then warn("[QiurongToolbox] Toggle 回调出错: " .. tostring(err)) end
 		end
+		if fire then saveHook(lib) end
 	end
-	btn.MouseButton1Click:Connect(function() apply(not Values[key], true) end)
-	makeHandle(lib, o, "toggle",
+	clickBtn.MouseButton1Click:Connect(function() apply(not Values[key], true) end)
+	return makeHandle(lib, o, "toggle",
 		function() return Values[key] end,
-		function(v) apply(v == true, true) end)
-	return card
+		function(v, fire) apply(v == true, fire ~= false) end,
+		refs)
 end
 
 local function ctlSlider(sec, o)
 	local lib, ctx = sec.lib, sec.ctx
 	local t = lib:Theme()
-	local card, right = rowCard(sec, o, ctx.M.ctlH)
+	local card, right, refs = rowCard(sec, o, ctx.M.ctlH)
 	local mn = tonumber(o.Min) or 0
 	local mx = tonumber(o.Max) or 100
 	local st = tonumber(o.Step) or 1
@@ -445,6 +767,7 @@ local function ctlSlider(sec, o)
 			local ok, err = pcall(o.Callback, nv)
 			if not ok then warn("[QiurongToolbox] Slider 回调出错: " .. tostring(err)) end
 		end
+		if fire and changed then saveHook(lib) end
 	end
 	track.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -462,21 +785,36 @@ local function ctlSlider(sec, o)
 			dragging = false
 		end
 	end)
-	makeHandle(lib, o, "slider",
+	local h = makeHandle(lib, o, "slider",
 		function() return Values[key] end,
-		function(v) setVal(v, true) end)
-	return card
+		function(v, fire) setVal(v, fire ~= false) end,
+		refs)
+	function h:SetMin(nv)
+		mn = tonumber(nv) or mn
+		if mn > mx then mn = mx end
+		setVal(Values[key], false)
+	end
+	function h:SetMax(nv)
+		mx = tonumber(nv) or mx
+		if mx < mn then mx = mn end
+		setVal(Values[key], false)
+	end
+	return h
 end
 
--- 选项浮层（dropdown / multi 共用；挂 shell 顶层避免被裁剪）
-local function openList(ctx, anchorInst, options, current, multi, onPick, onClose)
+-- 选项浮层（dropdown / multi / 主题菜单共用；挂 shell 顶层避免被裁剪）
+-- opts.Search = true 顶部搜索栏；opts.AllowNone = true 底部"（无）"清空项；opts.Title 浮层标题
+local function openList(ctx, anchorInst, options, current, multi, onPick, onClose, opts)
 	local lib = ctx.lib
 	local shell = ctx.shell
 	local t = lib:Theme()
 	ctx:CloseList()
+	opts = opts or {}
 	local rowH = ctx.M.mobile and 36 or 34
 	local maxShow = 6
-	local listH = math.min(#options, maxShow) * rowH + 12
+	local searchOn = opts.Search == true
+	local allowNone = opts.AllowNone == true and not multi
+	local listH = 40
 	local ap = anchorInst.AbsolutePosition - shell.AbsolutePosition
 	local box = New("Frame", {
 		Position = UDim2.fromOffset(math.floor(ap.X), math.floor(ap.Y + anchorInst.AbsoluteSize.Y + 4)),
@@ -484,14 +822,35 @@ local function openList(ctx, anchorInst, options, current, multi, onPick, onClos
 		BackgroundColor3 = t.panel2, ZIndex = 60, Parent = ctx.dropdownLayer,
 	})
 	Corner(box, 10)
-	local st = Stroke(box, "accent", 1)
-	lib:Bind(st, "Color", "accent")
+	Stroke(box, "accent", 1)
 	lib:Bind(box, "BackgroundColor3", "panel2")
+	local listTop = 0
+	local searchBox
+	if searchOn then
+		listTop = 32
+		searchBox = New("TextBox", {
+			Position = UDim2.fromOffset(8, 6), Size = UDim2.new(1, -16, 0, 24),
+			BackgroundColor3 = t.panel3, Text = "",
+			PlaceholderText = tostring(opts.SearchPlaceholder or "搜索..."),
+			Font = Enum.Font.GothamMedium, TextSize = 13,
+			TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false,
+			ZIndex = 61, Parent = box,
+		})
+		Pad(searchBox, 8, 0, 8, 0)
+		Corner(searchBox, 6)
+		Stroke(searchBox, "line", 1)
+		lib:Bind(searchBox, "BackgroundColor3", "panel3")
+		lib:Bind(searchBox, "TextColor3", "text")
+		lib:Bind(searchBox, "PlaceholderColor3", "muted")
+	end
 	local sc = New("ScrollingFrame", {
-		BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
-		CanvasSize = UDim2.fromOffset(0, #options * rowH),
-		ScrollBarThickness = 3, BorderSizePixel = 0,
-		ScrollBarImageColor3 = t.accent, Parent = box,
+		Position = UDim2.fromOffset(0, listTop),
+		Size = UDim2.new(1, 0, 1, -listTop),
+		BackgroundTransparency = 1, BorderSizePixel = 0,
+		CanvasSize = UDim2.fromOffset(0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = t.accent, ZIndex = 61, Parent = box,
 	})
 	lib:Bind(sc, "ScrollBarImageColor3", "accent")
 	VList(sc, 2)
@@ -499,38 +858,74 @@ local function openList(ctx, anchorInst, options, current, multi, onPick, onClos
 	if multi and type(current) == "table" then
 		for v in pairs(current) do sel[v] = true end
 	end
-	for i, opt in ipairs(options) do
-		local optText = tostring(opt)
-		local optBtn = New("TextButton", {
-			Size = UDim2.new(1, -8, 0, rowH), Text = "",
-			BackgroundColor3 = t.accent, BackgroundTransparency = 1,
-			LayoutOrder = i, Parent = sc,
-		})
-		Corner(optBtn, 6)
-		local isOn = multi and sel[optText] or (optText == tostring(current))
-		local lbl = New("TextLabel", {
-			BackgroundTransparency = 1, Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(10, 0),
-			Font = Enum.Font.GothamMedium, TextSize = ctx.M.body,
-			TextXAlignment = Enum.TextXAlignment.Left, Text = optText, Parent = optBtn,
-		})
-		lib:Bind(lbl, "TextColor3", isOn and "accent" or "text")
-		if multi then
-			local mark = New("TextLabel", {
-				BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(16, 16),
-				Font = Enum.Font.GothamBold, TextSize = 14,
-				Text = sel[optText] and "✓" or "", Parent = optBtn,
-			})
-			lib:Bind(mark, "TextColor3", "accent")
+	local function buildRows(filter)
+		for _, c in ipairs(sc:GetChildren()) do
+			if c:IsA("TextButton") then c:Destroy() end
 		end
-		optBtn.MouseButton1Click:Connect(function()
-			if multi then
-				sel[optText] = not sel[optText] or nil
-				lbl.TextColor3 = sel[optText] and lib:Theme().accent or lib:Theme().text
-				lbl.TextColor3 = lib:Theme()[sel[optText] and "accent" or "text"]
-				lbl.Parent:FindFirstChildOfClass("TextLabel")
+		local shown = 0
+		local needle = filter and string.lower(tostring(filter)) or ""
+		if needle == "" then needle = nil end
+		for i, opt in ipairs(options) do
+			local optText = tostring(opt)
+			if not needle or string.find(string.lower(optText), needle, 1, true) then
+				shown += 1
+				local optBtn = New("TextButton", {
+					Size = UDim2.new(1, -8, 0, rowH), Text = "",
+					BackgroundColor3 = t.accent, BackgroundTransparency = 1,
+					LayoutOrder = i, ZIndex = 62, Parent = sc,
+				})
+				Corner(optBtn, 6)
+				local isOn = multi and sel[optText] or (optText == tostring(current))
+				local lbl = New("TextLabel", {
+					BackgroundTransparency = 1, Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(10, 0),
+					Font = Enum.Font.GothamMedium, TextSize = ctx.M.body,
+					TextXAlignment = Enum.TextXAlignment.Left, Text = optText, Parent = optBtn,
+				})
+				lib:Bind(lbl, "TextColor3", isOn and "accent" or "text")
+				local mark
+				if multi then
+					mark = New("TextLabel", {
+						BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
+						Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(16, 16),
+						Font = Enum.Font.GothamBold, TextSize = 14,
+						Text = sel[optText] and "✓" or "", Parent = optBtn,
+					})
+					lib:Bind(mark, "TextColor3", "accent")
+				end
+				optBtn.MouseButton1Click:Connect(function()
+					if multi then
+						if sel[optText] then sel[optText] = nil else sel[optText] = true end
+						lbl.TextColor3 = lib:Theme()[sel[optText] and "accent" or "text"]
+						mark.Text = sel[optText] and "✓" or ""
+					end
+					onPick(optText, sel[optText] == true)
+				end)
 			end
-			onPick(optText, sel[optText] == true)
+		end
+		if allowNone then
+			shown += 1
+			local noneBtn = New("TextButton", {
+				Size = UDim2.new(1, -8, 0, rowH), Text = "",
+				BackgroundTransparency = 1,
+				LayoutOrder = 9999, ZIndex = 62, Parent = sc,
+			})
+			local nlbl = New("TextLabel", {
+				BackgroundTransparency = 1, Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(10, 0),
+				Font = Enum.Font.GothamMedium, TextSize = ctx.M.body,
+				TextXAlignment = Enum.TextXAlignment.Left, Text = "（无）", Parent = noneBtn,
+			})
+			lib:Bind(nlbl, "TextColor3", "muted")
+			noneBtn.MouseButton1Click:Connect(function()
+				onPick(nil, false)
+			end)
+		end
+		listH = math.min(shown, maxShow) * rowH + 12 + listTop
+		box.Size = UDim2.fromOffset(anchorInst.AbsoluteSize.X, listH)
+	end
+	buildRows(nil)
+	if searchOn then
+		searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+			buildRows(searchBox.Text)
 		end)
 	end
 	ctx.activeList = {
@@ -552,6 +947,11 @@ end
 local function closeListImpl(ctx)
 	if ctx.activeList then
 		pcall(function() ctx.activeList.conn:Disconnect() end)
+		if ctx.activeList.extraConns then
+			for _, c in ipairs(ctx.activeList.extraConns) do
+				pcall(function() c:Disconnect() end)
+			end
+		end
 		if ctx.activeList.box then ctx.activeList.box:Destroy() end
 		if ctx.activeList.onClose then pcall(ctx.activeList.onClose) end
 		ctx.activeList = nil
@@ -561,7 +961,7 @@ end
 local function ctlDropdown(sec, o, multi)
 	local lib, ctx = sec.lib, sec.ctx
 	local t = lib:Theme()
-	local card, right = rowCard(sec, o, ctx.M.ctlH)
+	local card, right, refs = rowCard(sec, o, ctx.M.ctlH)
 	local key = (multi and "multi." or "dropdown.") .. tostring(o.Flag or (function() lib.Seq += 1 return "auto" .. lib.Seq end)())
 	local options = {}
 	for _, v in ipairs(type(o.Options) == "table" and o.Options or {}) do
@@ -609,6 +1009,12 @@ local function ctlDropdown(sec, o, multi)
 			lbl.Text = tostring(Values[key])
 		end
 	end
+	local function fireChange(v)
+		if o.Callback then
+			local ok, err = pcall(o.Callback, v)
+			if not ok then warn("[QiurongToolbox] " .. (multi and "Multi" or "Dropdown") .. " 回调出错: " .. tostring(err)) end
+		end
+	end
 	btn.MouseButton1Click:Connect(function()
 		if ctx.activeList and ctx.activeList.anchor == btn then
 			ctx:CloseList()
@@ -618,48 +1024,58 @@ local function ctlDropdown(sec, o, multi)
 			openList(ctx, btn, options, Values[key], true, function(optText, on)
 				if on then Values[key][optText] = true else Values[key][optText] = nil end
 				refreshLabel()
-				if o.Callback then
-					local picked = {}
-					for v in pairs(Values[key]) do table.insert(picked, v) end
-					local ok, err = pcall(o.Callback, picked)
-					if not ok then warn("[QiurongToolbox] Multi 回调出错: " .. tostring(err)) end
-				end
+				local picked = {}
+				for v in pairs(Values[key]) do table.insert(picked, v) end
+				fireChange(picked)
+				saveHook(lib)
 			end)
 		else
 			openList(ctx, btn, options, Values[key], false, function(optText)
-				Values[key] = optText
+				Values[key] = optText and tostring(optText) or ""
 				refreshLabel()
 				ctx:CloseList()
-				if o.Callback then
-					local ok, err = pcall(o.Callback, optText)
-					if not ok then warn("[QiurongToolbox] Dropdown 回调出错: " .. tostring(err)) end
-				end
-			end)
+				fireChange(optText and tostring(optText) or nil)
+				saveHook(lib)
+			end, nil, { AllowNone = o.AllowNone == true })
 		end
 		if ctx.activeList then ctx.activeList.anchor = btn end
 	end)
 	local h = makeHandle(lib, o, multi and "multi" or "dropdown",
 		function() return Values[key] end,
-		function(v)
+		function(v, fire)
 			if multi then
 				Values[key] = {}
 				if type(v) == "table" then
 					for _, item in ipairs(v) do Values[key][tostring(item)] = true end
 				end
 			else
-				Values[key] = tostring(v)
+				Values[key] = v and tostring(v) or ""
 			end
 			refreshLabel()
-		end)
-	if multi then
-		function h.SetOptions(list)
-			options = {}
-			for _, v in ipairs(type(list) == "table" and list or {}) do
-				table.insert(options, tostring(v))
+			if fire then
+				if multi then
+					local picked = {}
+					for item in pairs(Values[key]) do table.insert(picked, item) end
+					fireChange(picked)
+				else
+					fireChange(Values[key] ~= "" and Values[key] or nil)
+				end
 			end
+		end, refs)
+	function h:Select(v)
+		h:Set(v, true)
+	end
+	function h:SetOptions(list)
+		options = {}
+		for _, v in ipairs(type(list) == "table" and list or {}) do
+			table.insert(options, tostring(v))
+		end
+		if not multi and Values[key] ~= "" and not table.find(options, Values[key]) then
+			Values[key] = options[1] or ""
+			refreshLabel()
 		end
 	end
-	return card
+	return h
 end
 
 local function ctlMulti(sec, o)
@@ -669,7 +1085,7 @@ end
 local function ctlInput(sec, o)
 	local lib, ctx = sec.lib, sec.ctx
 	local t = lib:Theme()
-	local card, right = rowCard(sec, o, ctx.M.ctlH)
+	local card, right, refs = rowCard(sec, o, ctx.M.ctlH)
 	local key = "input." .. tostring(o.Flag or (function() lib.Seq += 1 return "auto" .. lib.Seq end)())
 	Values[key] = tostring(o.Default or "")
 	local box = New("TextBox", {
@@ -691,17 +1107,21 @@ local function ctlInput(sec, o)
 			local ok, err = pcall(o.Callback, box.Text, enter)
 			if not ok then warn("[QiurongToolbox] Input 回调出错: " .. tostring(err)) end
 		end
+		if lib._Loading then return end
+		saveHook(lib)
 	end)
-	makeHandle(lib, o, "input",
+	return makeHandle(lib, o, "input",
 		function() return Values[key] end,
-		function(v) box.Text = tostring(v) Values[key] = box.Text end)
-	return card
+		function(v)
+			box.Text = tostring(v or "")
+			Values[key] = box.Text
+		end, refs)
 end
 
 local function ctlKeybind(sec, o)
 	local lib, ctx = sec.lib, sec.ctx
 	local t = lib:Theme()
-	local card, right = rowCard(sec, o, ctx.M.ctlH)
+	local card, right, refs = rowCard(sec, o, ctx.M.ctlH)
 	local current = o.Default or nil
 	local listening = false
 	local btn = New("TextButton", {
@@ -720,29 +1140,232 @@ local function ctlKeybind(sec, o)
 		btn.Text = "按下按键..."
 		conn = UserInputService.InputBegan:Connect(function(input, gpe)
 			if input.UserInputType == Enum.UserInputType.Keyboard then
-				if input.KeyCode == Enum.KeyCode.Escape then
-					conn:Disconnect()
-					listening = false
-					btn.Text = current and current.Name or "未绑定"
-				else
-					current = input.KeyCode
-					btn.Text = current.Name
-					conn:Disconnect()
-					listening = false
-					if o.Callback then pcall(o.Callback, current) end
-				end
+				pcall(function()
+					if input.KeyCode == Enum.KeyCode.Escape then
+						btn.Text = current and current.Name or "未绑定"
+					else
+						current = input.KeyCode
+						btn.Text = current.Name
+						if o.Callback then pcall(o.Callback, current) end
+						if not lib._Loading then saveHook(lib) end
+					end
+				end)
+				if conn then conn:Disconnect() conn = nil end
+				listening = false
 			end
 		end)
 	end)
 	local h = makeHandle(lib, o, "keybind",
 		function() return current end,
-		function(v) current = v btn.Text = v and v.Name or "未绑定" end)
-	return card
+		function(v, fire)
+			current = v
+			if btn.Parent then btn.Text = v and v.Name or "未绑定" end
+			if fire and o.Callback and v then pcall(o.Callback, v) end
+		end, refs)
+	return h
+end
+
+-- 颜色选择器：右侧行内色块 → 弹出 HSV 面板（SV 渐变 + 色相条 + 预设色板 + Hex）
+local function ctlColorpicker(sec, o)
+	local lib, ctx = sec.lib, sec.ctx
+	local t = lib:Theme()
+	local card, right, refs = rowCard(sec, o, ctx.M.ctlH)
+	local key = "color." .. tostring(o.Flag or (function() lib.Seq += 1 return "auto" .. lib.Seq end)())
+	local color = typeof(o.Default) == "Color3" and o.Default or Color3.fromRGB(255, 255, 255)
+	Values[key] = color
+	local hCur, sCur, vCur = Color3.toHSV(color)
+	local swatch = New("TextButton", {
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
+		Size = UDim2.fromOffset(30, 22), BackgroundColor3 = color, Text = "",
+		Parent = right, ZIndex = 5,
+	})
+	Corner(swatch, 6)
+	Stroke(swatch, "line", 1)
+	local function applyColor(fire)
+		color = Color3.fromHSV(hCur, sCur, vCur)
+		Values[key] = color
+		if swatch.Parent then swatch.BackgroundColor3 = color end
+		if fire and o.Callback then
+			local ok, err = pcall(o.Callback, color)
+			if not ok then warn("[QiurongToolbox] ColorPicker 回调出错: " .. tostring(err)) end
+		end
+		if fire then saveHook(lib) end
+	end
+	swatch.MouseButton1Click:Connect(function()
+		ctx:CloseList()
+		local PW = 210
+		local SVH = 132
+		local HUEH = 12
+		local ap = swatch.AbsolutePosition - ctx.shell.AbsolutePosition
+		local bx = math.floor(ap.X)
+		if bx + PW > ctx.shell.AbsoluteSize.X - 10 then bx = math.floor(ctx.shell.AbsoluteSize.X - PW - 10) end
+		if bx < 10 then bx = 10 end
+		local box = New("Frame", {
+			Position = UDim2.fromOffset(bx, math.floor(ap.Y + swatch.AbsoluteSize.Y + 6)),
+			Size = UDim2.fromOffset(PW, 268),
+			BackgroundColor3 = t.panel2, ZIndex = 60, Parent = ctx.dropdownLayer,
+		})
+		Corner(box, 10)
+		Stroke(box, "accent", 1)
+		lib:Bind(box, "BackgroundColor3", "panel2")
+		-- SV 面板：底色 = 当前色相；白层左→右透明；黑层上→下变黑
+		local sv = New("Frame", {
+			Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(PW - 16, SVH),
+			BackgroundColor3 = Color3.fromHSV(hCur, 1, 1), ZIndex = 61, Parent = box,
+		})
+		Corner(sv, 8)
+		local whiteL = New("Frame", {
+			Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(1, 1, 1), ZIndex = 62, Parent = sv,
+		})
+		Corner(whiteL, 8)
+		New("UIGradient", { Rotation = 0, Transparency = NumberSequence.new(0, 1), Parent = whiteL })
+		local blackL = New("Frame", {
+			Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), ZIndex = 63, Parent = sv,
+		})
+		Corner(blackL, 8)
+		New("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(1, 0), Parent = blackL })
+		local svDot = New("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(sCur * (PW - 16), (1 - vCur) * SVH),
+			Size = UDim2.fromOffset(12, 12), BackgroundTransparency = 1, ZIndex = 64, Parent = sv,
+		})
+		Corner(svDot, 6)
+		Stroke(svDot, "text", 2)
+		-- 色相条
+		local hue = New("Frame", {
+			Position = UDim2.fromOffset(8, 8 + SVH + 8), Size = UDim2.fromOffset(PW - 16, HUEH),
+			BackgroundColor3 = Color3.new(1, 1, 1), ZIndex = 61, Parent = box,
+		})
+		Corner(hue, 6)
+		New("UIGradient", {
+			Rotation = 0, Parent = hue,
+			Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
+				ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+				ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+				ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0, 255, 255)),
+				ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+				ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+				ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
+			}),
+		})
+		local hueDot = New("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(hCur * (PW - 16), HUEH / 2),
+			Size = UDim2.fromOffset(6, HUEH + 8), BackgroundTransparency = 1, ZIndex = 64, Parent = hue,
+		})
+		Corner(hueDot, 3)
+		Stroke(hueDot, "text", 2)
+		-- 预设色板
+		local presets = {
+			Color3.fromRGB(57, 200, 255), Color3.fromRGB(131, 212, 107), Color3.fromRGB(76, 141, 255),
+			Color3.fromRGB(255, 107, 122), Color3.fromRGB(255, 203, 105), Color3.fromRGB(155, 130, 255),
+			Color3.fromRGB(255, 255, 255), Color3.fromRGB(160, 168, 176), Color3.fromRGB(60, 66, 74),
+			Color3.fromRGB(10, 12, 16),
+		}
+		local pr = New("Frame", {
+			Position = UDim2.fromOffset(8, 8 + SVH + HUEH + 18), Size = UDim2.fromOffset(PW - 16, 24),
+			BackgroundTransparency = 1, ZIndex = 61, Parent = box,
+		})
+		local hl = New("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pr,
+		})
+		for pi, pc in ipairs(presets) do
+			local pb = New("TextButton", {
+				Size = UDim2.new(0.1, -5, 1, 0), BackgroundColor3 = pc, Text = "",
+				LayoutOrder = pi, ZIndex = 62, Parent = pr,
+			})
+			Corner(pb, 6)
+			Stroke(pb, "line", 1)
+			pb.MouseButton1Click:Connect(function()
+				hCur, sCur, vCur = Color3.toHSV(pc)
+				applyColor(true)
+			end)
+		end
+		-- Hex 显示
+		local hexLbl = New("TextLabel", {
+			Position = UDim2.fromOffset(8, 8 + SVH + HUEH + 48), Size = UDim2.new(1, -16, 0, 16),
+			BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 12,
+			TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 61, Parent = box,
+		})
+		lib:Bind(hexLbl, "TextColor3", "muted")
+		local function refreshPicker()
+			if not sv.Parent then return end
+			sv.BackgroundColor3 = Color3.fromHSV(hCur, 1, 1)
+			svDot.Position = UDim2.fromOffset(sCur * (PW - 16), (1 - vCur) * SVH)
+			hueDot.Position = UDim2.fromOffset(hCur * (PW - 16), HUEH / 2)
+			hexLbl.Text = "#" .. color:ToHex():upper() .. string.format("   H%.0f S%.0f%% V%.0f%%", hCur * 360, sCur * 100, vCur * 100)
+		end
+		local extra = {}
+		local svDrag, hueDrag = false, false
+		local function svUpdate(input)
+			local rp = input.Position - sv.AbsolutePosition
+			sCur = math.clamp(rp.X / math.max(sv.AbsoluteSize.X, 1), 0, 1)
+			vCur = 1 - math.clamp(rp.Y / math.max(sv.AbsoluteSize.Y, 1), 0, 1)
+			applyColor(true)
+			refreshPicker()
+		end
+		local function hueUpdate(input)
+			local rp = input.Position - hue.AbsolutePosition
+			hCur = math.clamp(rp.X / math.max(hue.AbsoluteSize.X, 1), 0, 0.999)
+			applyColor(true)
+			refreshPicker()
+		end
+		sv.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				svDrag = true
+				svUpdate(input)
+			end
+		end)
+		hue.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				hueDrag = true
+				hueUpdate(input)
+			end
+		end)
+		table.insert(extra, UserInputService.InputChanged:Connect(function(input)
+			if svDrag and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				svUpdate(input)
+			elseif hueDrag and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				hueUpdate(input)
+			end
+		end))
+		table.insert(extra, UserInputService.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				svDrag = false
+				hueDrag = false
+			end
+		end))
+		refreshPicker()
+		ctx.activeList = {
+			box = box,
+			extraConns = extra,
+			conn = UserInputService.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					local m = UserInputService:GetMouseLocation()
+					local bp = box.AbsolutePosition
+					local bs = box.AbsoluteSize
+					if m.X < bp.X or m.X > bp.X + bs.X or m.Y < bp.Y or m.Y > bp.Y + bs.Y then
+						ctx:CloseList()
+					end
+				end
+			end),
+		}
+	end)
+	local h = makeHandle(lib, o, "color",
+		function() return Values[key] end,
+		function(cv, fire)
+			if typeof(cv) == "Color3" then
+				hCur, sCur, vCur = Color3.toHSV(cv)
+				applyColor(fire ~= false)
+			end
+		end, refs)
+	return h
 end
 
 local function ctlLabel(sec, o)
 	local lib, ctx = sec.lib, sec.ctx
-	local t = lib:Theme()
 	local card = New("Frame", {
 		Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, Parent = sec.holder,
 	})
@@ -754,7 +1377,12 @@ local function ctlLabel(sec, o)
 		Text = string.upper(tostring(o.Title or o.title or "")), Parent = card,
 	})
 	lib:Bind(lbl, "TextColor3", "muted")
-	return card
+	return makeHandle(lib, o, "label",
+		function() return tostring(lbl.Text) end,
+		function(v)
+			lbl.Text = string.upper(tostring(v or ""))
+		end,
+		{ card = card, title = lbl })
 end
 
 local function ctlDivider(sec)
@@ -766,7 +1394,10 @@ local function ctlDivider(sec)
 	})
 	sec._order = (sec._order or 0) + 1
 	lib:Bind(line, "BackgroundColor3", "line_soft")
-	return line
+	return makeHandle(lib, o or {}, "divider",
+		function() return nil end,
+		function() end,
+		{ card = line })
 end
 
 local function ctlParagraph(sec, o)
@@ -779,7 +1410,7 @@ local function ctlParagraph(sec, o)
 	})
 	sec._order = (sec._order or 0) + 1
 	Corner(card, 14)
-	Stroke(card, "line", 1)
+	local cardSt = Stroke(card, "line", 1)
 	lib:Bind(card, "BackgroundColor3", "panel")
 	local sp = ctx.M.mobile and 12 or 18
 	local y = sp
@@ -816,18 +1447,39 @@ local function ctlParagraph(sec, o)
 	})
 	lib:Bind(big, "TextColor3", "text")
 	y += big.Size.Y.Offset + 6
-	for _, d in ipairs(descs) do
-		local dl = New("TextLabel", {
-			BackgroundTransparency = 1, Position = UDim2.fromOffset(sp, y),
-			Size = UDim2.new(1, -sp * 2, 0, ctx.M.mobile and 16 or 20),
-			Font = Enum.Font.Gotham, TextSize = ctx.M.mobile and 12 or 14,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Text = tostring(d), Parent = card,
-		})
-		lib:Bind(dl, "TextColor3", "muted")
-		y += dl.Size.Y.Offset
+	-- 描述行集中管理：支持 SetDesc 动态重建
+	local descLabels = {}
+	local function rebuildDesc(items)
+		for _, l in ipairs(descLabels) do l:Destroy() end
+		descLabels = {}
+		local list = type(items) == "table" and items or (items and { tostring(items) } or {})
+		for _, d in ipairs(list) do
+			local dl = New("TextLabel", {
+				BackgroundTransparency = 1, Position = UDim2.fromOffset(sp, y),
+				Size = UDim2.new(1, -sp * 2, 0, ctx.M.mobile and 16 or 20),
+				Font = Enum.Font.Gotham, TextSize = ctx.M.mobile and 12 or 14,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Text = tostring(d), Parent = card,
+			})
+			lib:Bind(dl, "TextColor3", "muted")
+			table.insert(descLabels, dl)
+			y += dl.Size.Y.Offset
+		end
+		card.Size = UDim2.new(1, 0, 0, y + 14)
 	end
-	return card
+	rebuildDesc(descs)
+	local hnd = makeHandle(lib, o, "paragraph",
+		function() return descs end,
+		function() end,
+		{ card = card, stroke = cardSt, title = big })
+	function hnd:SetTitle(v)
+		if big.Parent then big.Text = tostring(v) end
+	end
+	function hnd:SetDesc(v)
+		descs = v
+		rebuildDesc(v)
+	end
+	return hnd
 end
 
 local function ctlStat(sec, o)
@@ -876,7 +1528,16 @@ local function ctlStat(sec, o)
 		Text = tostring(o.Label or o.label or ""), Parent = cell,
 	})
 	lib:Bind(lbl, "TextColor3", "muted")
-	return cell
+	local h = makeHandle(lib, o, "stat",
+		function() return tostring(num.Text) end,
+		function(v)
+			num.Text = tostring(v)
+		end,
+		{ card = cell, title = lbl })
+	function h:SetLabel(v)
+		if lbl.Parent then lbl.Text = tostring(v) end
+	end
+	return h
 end
 
 local function ctlCard(sec, o)
@@ -900,8 +1561,7 @@ local function ctlCard(sec, o)
 		BackgroundColor3 = t[token], Parent = card,
 	})
 	Corner(strip, 2)
-	-- 侧条用固定色（主题 token 动态换色走 SetTheme RefreshTheme）
-	strip.BackgroundColor3 = t[token]
+	lib:Bind(strip, "BackgroundColor3", token)
 	local badge = New("Frame", {
 		Size = UDim2.fromOffset(ctx.M.mobile and 24 or 32, ctx.M.mobile and 24 or 32),
 		Position = UDim2.fromOffset(ctx.M.mobile and 14 or 16, ctx.M.mobile and 12 or 14),
@@ -909,12 +1569,13 @@ local function ctlCard(sec, o)
 	})
 	Corner(badge, 7)
 	Stroke(badge, token, 1, 0.2, lib)
+	lib:Bind(badge, "BackgroundColor3", token)
 	local bt = New("TextLabel", {
 		BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
 		Font = Enum.Font.GothamBold, TextSize = ctx.M.mobile and 12 or 15,
 		Text = tostring(o.Key or o.key or ""), Parent = badge,
 	})
-	bt.TextColor3 = t[token]
+	lib:Bind(bt, "TextColor3", token)
 	local title = New("TextLabel", {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(ctx.M.mobile and 46 or 56, ctx.M.mobile and 14 or 16),
@@ -924,6 +1585,7 @@ local function ctlCard(sec, o)
 		Text = tostring(o.Title or o.title or ""), Parent = card,
 	})
 	lib:Bind(title, "TextColor3", "text")
+	local bulletRows = {}
 	local by = ctx.M.mobile and 42 or 52
 	for _, line in ipairs(bullets) do
 		local dot = New("Frame", {
@@ -931,6 +1593,7 @@ local function ctlCard(sec, o)
 			Size = UDim2.fromOffset(6, 6), BackgroundColor3 = t[token], Parent = card,
 		})
 		Corner(dot, 3)
+		lib:Bind(dot, "BackgroundColor3", token)
 		local bl = New("TextLabel", {
 			BackgroundTransparency = 1,
 			Position = UDim2.fromOffset(ctx.M.mobile and 32 or 38, by),
@@ -941,9 +1604,45 @@ local function ctlCard(sec, o)
 			Text = tostring(line), Parent = card,
 		})
 		lib:Bind(bl, "TextColor3", "text")
+		table.insert(bulletRows, { dot = dot, lbl = bl })
 		by += lineH
 	end
-	return card
+	local h = makeHandle(lib, o, "card",
+		function() return tostring(title.Text) end,
+		function(v)
+			if title.Parent then title.Text = tostring(v) end
+		end,
+		{ card = card, title = title })
+	function h:SetBullets(list)
+		for _, row in ipairs(bulletRows) do
+			row.dot:Destroy()
+			row.lbl:Destroy()
+		end
+		local items = type(list) == "table" and list or {}
+		card.Size = UDim2.new(1, 0, 0, (ctx.M.mobile and 50 or 60) + #items * lineH + 12)
+		local yy = ctx.M.mobile and 42 or 52
+		for _, line in ipairs(items) do
+			local dot = New("Frame", {
+				Position = UDim2.fromOffset(ctx.M.mobile and 20 or 24, yy + 7),
+				Size = UDim2.fromOffset(6, 6), BackgroundColor3 = t[token], Parent = card,
+			})
+			Corner(dot, 3)
+			lib:Bind(dot, "BackgroundColor3", token)
+			local bl = New("TextLabel", {
+				BackgroundTransparency = 1,
+				Position = UDim2.fromOffset(ctx.M.mobile and 32 or 38, yy),
+				Size = UDim2.new(1, -(ctx.M.mobile and 44 or 52), 0, lineH - 2),
+				Font = Enum.Font.Gotham, TextSize = ctx.M.body,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				Text = tostring(line), Parent = card,
+			})
+			lib:Bind(bl, "TextColor3", "text")
+			table.insert(bulletRows, { dot = dot, lbl = bl })
+			yy += lineH
+		end
+	end
+	return h
 end
 
 -- Section builder 方法表（挂在 tabObj 的 Sec 上）
@@ -961,6 +1660,7 @@ function SectionMethods:Divider() return ctlDivider(self) end
 function SectionMethods:Paragraph(o) return ctlParagraph(self, o or {}) end
 function SectionMethods:Stat(o) return ctlStat(self, o or {}) end
 function SectionMethods:Card(o) return ctlCard(self, o or {}) end
+function SectionMethods:ColorPicker(o) return ctlColorpicker(self, o or {}) end
 
 -- ===== 窗口壳 =====
 local function buildPattern(lib, shell, t, M)
@@ -1121,11 +1821,21 @@ local function buildTopBar(lib, ctx, cfg)
 	lib:Bind(marquee, "TextColor3", "text")
 	ctx.marquee = marquee
 	ctx.marqueeX = 0
-	-- 最小化 / 关闭
+	-- 最小化 / 主题切换 / 关闭
 	local btnH = M.top - M.pad * 2
-	local btnW = math.floor((ctlW - M.gap) / 2)
-	local minBtn = New("TextButton", {
+	local btnW = math.floor((ctlW - M.gap * 2) / 3)
+	local themeBtn = New("TextButton", {
 		Position = UDim2.new(1, -(ctlW + M.pad), 0, M.pad),
+		Size = UDim2.fromOffset(btnW, btnH),
+		BackgroundColor3 = t.panel2, Font = Enum.Font.GothamBold,
+		TextSize = M.mobile and 18 or 24, Text = "◐", Parent = top,
+	})
+	Corner(themeBtn, M.mobile and 10 or 14)
+	Stroke(themeBtn, "line", 1)
+	lib:Bind(themeBtn, "BackgroundColor3", "panel2")
+	lib:Bind(themeBtn, "TextColor3", "accent2")
+	local minBtn = New("TextButton", {
+		Position = UDim2.new(1, -(ctlW + M.pad) + btnW + M.gap, 0, M.pad),
 		Size = UDim2.fromOffset(btnW, btnH),
 		BackgroundColor3 = t.panel2, Font = Enum.Font.GothamBold,
 		TextSize = M.mobile and 18 or 26, Text = "—", Parent = top,
@@ -1144,8 +1854,12 @@ local function buildTopBar(lib, ctx, cfg)
 	Stroke(closeBtn, "danger", 1)
 	lib:Bind(closeBtn, "BackgroundColor3", "danger")
 	lib:Bind(closeBtn, "TextColor3", "text")
+	ctx.themeBtn = themeBtn
 	ctx.minBtn = minBtn
 	ctx.closeBtn = closeBtn
+	ctx.topTitle = title
+	ctx.topSub = subtitle
+	ctx.markText = markText
 	return top
 end
 
@@ -1194,7 +1908,7 @@ local function buildMenuItem(lib, ctx, tabObj, order)
 		Size = UDim2.fromOffset(math.floor(M.itemH * 0.42), math.floor(M.itemH * 0.42)),
 		Rotation = 45, BackgroundColor3 = t.panel2, Parent = item,
 	})
-	Stroke(tip, "line", 1)
+	local tipSt = Stroke(tip, "line", 1)
 	lib:Bind(tip, "BackgroundColor3", "panel2")
 	local lbl = New("TextLabel", {
 		BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 0),
@@ -1207,6 +1921,7 @@ local function buildMenuItem(lib, ctx, tabObj, order)
 	lib:Bind(lbl, "TextColor3", "text")
 	tabObj._menuBtn = item
 	tabObj._menuTip = tip
+	tabObj._menuTipSt = tipSt
 	tabObj._menuStroke = st
 	tabObj._menuLbl = lbl
 	return item
@@ -1467,6 +2182,96 @@ local function buildBottom(lib, ctx, cfg)
 	return bar
 end
 
+-- ===== 卡密门禁 UI（WindUI KeySystem 对齐：KeyValidator/Key + Note + SaveKey） =====
+local function buildKeyGate(lib, mainGui, config, ksCfg, validateKey, onPass)
+	local t = lib:Theme()
+	local M = metrics(isMobile())
+	local kgui = New("ScreenGui", {
+		Name = "QiurongToolbox_KeyGate", ResetOnSpawn = false, IgnoreGuiInset = true,
+		DisplayOrder = 1000, Parent = safeParent(),
+	})
+	New("Frame", {
+		Size = UDim2.fromScale(1, 1), BackgroundColor3 = t.bg, BackgroundTransparency = 0.15,
+		Parent = kgui,
+	})
+	local card = New("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(M.mobile and 300 or 360, 252),
+		BackgroundColor3 = t.panel2, Parent = kgui,
+	})
+	Corner(card, 16)
+	Stroke(card, "accent", 1.5)
+	lib:Bind(card, "BackgroundColor3", "panel2")
+	local mark = New("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 22),
+		Size = UDim2.fromOffset(46, 46), BackgroundColor3 = t.accent, Parent = card,
+	})
+	Corner(mark, 12)
+	Stroke(mark, "accent2", 1.5)
+	lib:Bind(mark, "BackgroundColor3", "accent")
+	local markText = New("TextLabel", {
+		BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
+		Font = Enum.Font.GothamBold, TextSize = 22, Text = "秋", Parent = mark,
+	})
+	lib:Bind(markText, "TextColor3", "bg")
+	local title = New("TextLabel", {
+		BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 76),
+		Size = UDim2.new(1, 0, 0, 22), Font = Enum.Font.GothamBold, TextSize = 17,
+		Text = tostring(config.Title or "秋容工具箱 · 卡密验证"), Parent = card,
+	})
+	lib:Bind(title, "TextColor3", "text")
+	local note = New("TextLabel", {
+		BackgroundTransparency = 1, Position = UDim2.new(0, 20, 0, 100),
+		Size = UDim2.new(1, -40, 0, 30), Font = Enum.Font.Gotham, TextSize = 12,
+		TextWrapped = true, Text = tostring(ksCfg.Note or "请输入卡密后确认"), Parent = card,
+	})
+	lib:Bind(note, "TextColor3", "muted")
+	local box = New("TextBox", {
+		Position = UDim2.new(0, 30, 0, 140), Size = UDim2.new(1, -60, 0, 36),
+		BackgroundColor3 = t.panel3, Text = "",
+		PlaceholderText = "输入卡密...",
+		Font = Enum.Font.GothamMedium, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Center,
+		Parent = card,
+	})
+	Pad(box, 10, 0, 10, 0)
+	Corner(box, 8)
+	Stroke(box, "line", 1)
+	lib:Bind(box, "BackgroundColor3", "panel3")
+	lib:Bind(box, "TextColor3", "text")
+	lib:Bind(box, "PlaceholderColor3", "muted")
+	local status = New("TextLabel", {
+		BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 182),
+		Size = UDim2.new(1, 0, 0, 16), Font = Enum.Font.Gotham, TextSize = 12,
+		Text = "", Parent = card,
+	})
+	lib:Bind(status, "TextColor3", "danger")
+	local goBtn = New("TextButton", {
+		Position = UDim2.new(0.5, -60, 0, 204), Size = UDim2.fromOffset(120, 34),
+		BackgroundColor3 = t.accent, Font = Enum.Font.GothamBold, TextSize = 14,
+		Text = "确认", Parent = card,
+	})
+	Corner(goBtn, 8)
+	lib:Bind(goBtn, "BackgroundColor3", "accent")
+	lib:Bind(goBtn, "TextColor3", "bg")
+	local function submit()
+		local k = box.Text
+		if k == "" then
+			status.Text = "请输入卡密"
+			return
+		end
+		if validateKey(k) then
+			kgui:Destroy()
+			if onPass then pcall(onPass, k) end
+		else
+			status.Text = "卡密无效，请重试"
+		end
+	end
+	goBtn.MouseButton1Click:Connect(submit)
+	box.FocusLost:Connect(function(enter)
+		if enter then submit() end
+	end)
+end
+
 -- ===== CreateWindow =====
 function Lib:CreateWindow(self2, config)
 	if config == nil then config = self2 end
@@ -1474,6 +2279,27 @@ function Lib:CreateWindow(self2, config)
 	local mobile = isMobile()
 	local M = metrics(mobile)
 	local t = self:Theme()
+
+	-- 持久化目录与回灌准备（Folder=false 关闭持久化）
+	if config.Folder ~= nil then
+		if config.Folder == false then
+			self._autoSave = false
+		else
+			self.Folder = tostring(config.Folder)
+		end
+	end
+	self._Pending = nil
+	if self._autoSave and fsAvailable() then
+		local rok, json = pcall(readfile, tostring(self.Folder) .. "/config.json")
+		if rok and type(json) == "string" then
+			local snap = decodeSnapshot(json)
+			if snap then
+				self._Pending = snap.flags
+				if snap._theme and THEMES[snap._theme] then self:SetTheme(snap._theme) end
+				t = self:Theme()
+			end
+		end
+	end
 
 	local gui = New("ScreenGui", {
 		Name = "QiurongToolbox_" .. HttpService:GenerateGUID(false):sub(1, 8),
@@ -1571,11 +2397,99 @@ function Lib:CreateWindow(self2, config)
 	ctx.minBtn.MouseButton1Click:Connect(function() win:ToggleCollapse() end)
 	ctx.handle.MouseButton1Click:Connect(function() win:ToggleCollapse() end)
 
-	-- 关闭
+	-- 显示 / 隐藏（WindUI 对齐：关闭可由悬浮球重开）
+	function win:Show()
+		ctx:CloseList()
+		ctx.gui.Enabled = true
+		if ctx.openBtn then ctx.openBtn.Visible = false end
+	end
+	function win:Hide()
+		ctx:CloseList()
+		ctx.gui.Enabled = false
+		if ctx.openBtn then ctx.openBtn.Visible = true end
+	end
+
+	-- 关闭按钮：CloseAction = "hide"（默认，悬浮球可重开）| "destroy"
 	ctx.closeBtn.MouseButton1Click:Connect(function()
-		if config.OnClose then pcall(config.OnClose) end
-		win:Destroy()
+		if (config.CloseAction or "hide") == "destroy" then
+			if config.OnClose then pcall(config.OnClose) end
+			win:Destroy()
+		else
+			win:Hide()
+		end
 	end)
+
+	-- 顶栏主题按钮：循环切换全部主题（内置三套 + AddTheme 自定义）
+	ctx.themeBtn.MouseButton1Click:Connect(function()
+		local names = {}
+		for k in pairs(THEMES) do table.insert(names, k) end
+		table.sort(names)
+		local idx = table.find(names, self.ThemeName) or 1
+		local nextName = names[(idx % #names) + 1]
+		self:SetTheme(nextName)
+		win:Notify("主题已切换", tostring(THEMES[nextName].name) .. " · " .. nextName, "◐", 2)
+		if not self._Loading then saveHook(self) end
+	end)
+
+	-- 悬浮打开按钮（WindUI OpenButton 对齐；关闭窗口后显示，点击重开，可拖动）
+	local obCfg = config.OpenButton
+	if obCfg ~= false and (type(obCfg) ~= "table" or obCfg.Enabled ~= false) then
+		local onlyMobile = (type(obCfg) ~= "table") and true or (obCfg.OnlyMobile ~= false)
+		if not (onlyMobile and not mobile) then
+			local obGui = New("ScreenGui", {
+				Name = "QiurongToolbox_OpenBtn", ResetOnSpawn = false,
+				IgnoreGuiInset = true, DisplayOrder = 998, Parent = safeParent(),
+			})
+			local obBtn = New("TextButton", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(0.5, 0, 0.82, 0),
+				Size = UDim2.fromOffset(type(obCfg) == "table" and obCfg.Width or 128, 44),
+				BackgroundColor3 = t.accent,
+				Font = Enum.Font.GothamBold, TextSize = 15,
+				Text = tostring((type(obCfg) == "table" and obCfg.Title) or "打开 工具箱"),
+				TextColor3 = t.bg, Visible = false, Parent = obGui,
+			})
+			Corner(obBtn, 22)
+			Stroke(obBtn, "accent2", 2)
+			self:Bind(obBtn, "BackgroundColor3", "accent")
+			self:Bind(obBtn, "TextColor3", "bg")
+			local obDrag, obMoved = false, false
+			local obStart, obPos
+			obBtn.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					obDrag = true
+					obMoved = false
+					obStart = input.Position
+					obPos = obBtn.Position
+				end
+			end)
+			table.insert(ctx._conns, UserInputService.InputChanged:Connect(function(input)
+				if obDrag and obBtn.Visible and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+					local d = input.Position - obStart
+					if math.abs(d.X) + math.abs(d.Y) > 6 then obMoved = true end
+					obBtn.Position = UDim2.new(obPos.X.Scale, obPos.X.Offset + d.X, obPos.Y.Scale, obPos.Y.Offset + d.Y)
+				end
+			end))
+			table.insert(ctx._conns, UserInputService.InputEnded:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					if obDrag and not obMoved and obBtn.Visible then
+						win:Show()
+					end
+					obDrag = false
+				end
+			end))
+			ctx.openBtn = obBtn
+			ctx.openGui = obGui
+		end
+	end
+
+	-- 主题刷新回调（状态色：菜单项选中态、分类按钮选中态）
+	function win:RefreshTheme()
+		for _, tb in ipairs(win._tabOrder) do
+			applyMenuStyle(self, tb, win._current == tb)
+		end
+		refreshCats(self, ctx)
+	end
 
 	-- 缩放拖拽
 	if ctx.resizeGrip then
@@ -1591,7 +2505,7 @@ function Lib:CreateWindow(self2, config)
 		table.insert(ctx._conns, UserInputService.InputChanged:Connect(function(input)
 			if rz and input.UserInputType == Enum.UserInputType.MouseMovement then
 				ctx.userScale = true
-				scale.Scale = math.clamp(scStart * (1 + (input.Position.Y - rzStart).Y * 0.002), 0.55, 1.4)
+				scale.Scale = math.clamp(scStart * (1 + (input.Position.Y - rzStart) * 0.002), 0.55, 1.4)
 			end
 		end))
 		table.insert(ctx._conns, UserInputService.InputEnded:Connect(function(input)
@@ -1599,12 +2513,12 @@ function Lib:CreateWindow(self2, config)
 		end))
 	end
 
-	-- 跑马灯滚动
+	-- 跑马灯滚动（隐藏时暂停）
 	local baseX = (M.mobile and 64 or 104) + (M.mobile and 22 or 32)
 	local marqueeOff = 0
 	table.insert(ctx._conns, RunService.Heartbeat:Connect(function(dt)
 		local m = ctx.marquee
-		if m and m.Parent then
+		if m and m.Parent and ctx.gui.Enabled then
 			local textW = m.TextBounds.X
 			local visW = math.max(m.AbsoluteSize.X, 1)
 			marqueeOff += dt * 55
@@ -1615,11 +2529,11 @@ function Lib:CreateWindow(self2, config)
 
 	-- 呼出键
 	if config.ToggleKey then
-		table.insert(ctx._conns, UserInputService.InputBegan:Connect(function(input, gpe)
+		ctx._toggleConn = UserInputService.InputBegan:Connect(function(input, gpe)
 			if not gpe and input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == config.ToggleKey then
 				win:ToggleVisibility()
 			end
-		end))
+		end)
 	end
 
 	-- toast 容器
@@ -1634,6 +2548,48 @@ function Lib:CreateWindow(self2, config)
 
 	table.insert(self._Windows, win)
 	rawset(_G, self._GName, self)
+
+	-- ===== 卡密门禁（WindUI KeySystem 对齐） =====
+	local ksCfg = config.KeySystem
+	if ksCfg and (ksCfg.KeyValidator or ksCfg.Key) then
+		local function validateKey(k)
+			if ksCfg.KeyValidator then
+				local okv, res = pcall(ksCfg.KeyValidator, tostring(k))
+				return okv and res == true
+			end
+			if type(ksCfg.Key) == "table" then
+				return table.find(ksCfg.Key, tostring(k)) ~= nil
+			end
+			return tostring(k) == tostring(ksCfg.Key)
+		end
+		local passed = false
+		if ksCfg.SaveKey and fsAvailable() then
+			local rok, sk = pcall(readfile, tostring(self.Folder) .. "/key.txt")
+			if rok and type(sk) == "string" and validateKey(sk) then passed = true end
+		end
+		if not passed then
+			gui.Enabled = false
+			buildKeyGate(self, gui, config, ksCfg, validateKey, function(key)
+				gui.Enabled = true
+				if ksCfg.SaveKey and fsAvailable() then
+					pcall(function()
+						if isfolder and not isfolder(self.Folder) then makefolder(self.Folder) end
+					end)
+					pcall(writefile, tostring(self.Folder) .. "/key.txt", tostring(key))
+				end
+			end)
+		end
+	end
+
+	-- 开屏公告：作者配置了 Notice/Announce 才弹出（未配置默认不弹）
+	if config.Notice or config.Announce then
+		task.delay(0.2, function()
+			if not ctx._destroyed and gui.Enabled then
+				pcall(function() win:Notice(config.Notice or config.Announce) end)
+			end
+		end)
+	end
+
 	return win
 end
 
@@ -1681,7 +2637,7 @@ local function tabLazy(self)
 	return self._auto
 end
 for _, kind in ipairs({ "Button", "Toggle", "Slider", "Dropdown", "Multi", "Input",
-	"Keybind", "Label", "Divider", "Paragraph", "Stat", "Card" }) do
+	"Keybind", "Label", "Divider", "Paragraph", "Stat", "Card", "ColorPicker" }) do
 	TabMT[kind] = function(s, o) local sec = tabLazy(s) return sec[kind](sec, o) end
 end
 
@@ -1746,42 +2702,70 @@ function WinMT:ToggleCollapse() end -- 实例方法在 CreateWindow 中覆盖
 
 function WinMT:ToggleVisibility()
 	local ctx = self._ctx
-	ctx.gui.Enabled = not ctx.gui.Enabled
+	if ctx.gui.Enabled then
+		self:Hide()
+	else
+		self:Show()
+	end
 end
 
 function WinMT:Notify(a, b, ttl)
 	local ctx = self._ctx
 	local lib = ctx.lib
 	local t = lib:Theme()
-	local title = tostring(a or "通知")
-	local content = type(b) == "string" and b or (type(a) == "table" and tostring(a.Content or a.content or "") or "")
-	if type(a) == "table" then title = tostring(a.Title or a.title or "通知") end
+	local title, content, icon, dur = "通知", "", nil, 3.5
+	if type(a) == "table" then
+		title = tostring(a.Title or a.title or "通知")
+		content = tostring(a.Content or a.content or "")
+		icon = a.Icon or a.icon
+		dur = tonumber(a.Duration or a.duration) or 3.5
+	else
+		title = tostring(a or "通知")
+		content = type(b) == "string" and b or ""
+		dur = tonumber(ttl) or 3.5
+	end
 	local card = New("Frame", {
 		Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = t.panel2, Parent = ctx.toastLayer,
 	})
 	Corner(card, 10)
 	Stroke(card, "accent", 1, 0.3, lib)
 	lib:Bind(card, "BackgroundColor3", "panel2")
-	local bar = New("Frame", {
-		Size = UDim2.new(0, 3, 1, -16), Position = UDim2.fromOffset(8, 8),
-		BackgroundColor3 = t.accent, BorderSizePixel = 0, Parent = card,
-	})
-	lib:Bind(bar, "BackgroundColor3", "accent")
-	Corner(bar, 2)
+	local textX = 18
+	if icon and icon ~= "" then
+		textX = 58
+		local ib = New("Frame", {
+			AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 10, 0.5, 0),
+			Size = UDim2.fromOffset(38, 38), BackgroundColor3 = t.accent, Parent = card,
+		})
+		Corner(ib, 10)
+		lib:Bind(ib, "BackgroundColor3", "accent")
+		local it = New("TextLabel", {
+			BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
+			Font = Enum.Font.GothamBold, TextSize = 18, Text = tostring(icon), Parent = ib,
+		})
+		lib:Bind(it, "TextColor3", "bg")
+	else
+		local bar = New("Frame", {
+			Size = UDim2.new(0, 3, 1, -16), Position = UDim2.fromOffset(8, 8),
+			BackgroundColor3 = t.accent, BorderSizePixel = 0, Parent = card,
+		})
+		lib:Bind(bar, "BackgroundColor3", "accent")
+		Corner(bar, 2)
+	end
 	local tl = New("TextLabel", {
-		BackgroundTransparency = 1, Position = UDim2.fromOffset(18, 8),
-		Size = UDim2.new(1, -26, 0, 16), Font = Enum.Font.GothamBold, TextSize = 13,
+		BackgroundTransparency = 1, Position = UDim2.fromOffset(textX, 8),
+		Size = UDim2.new(1, -(textX + 8), 0, 16), Font = Enum.Font.GothamBold, TextSize = 13,
 		TextXAlignment = Enum.TextXAlignment.Left, Text = title, Parent = card,
 	})
 	lib:Bind(tl, "TextColor3", "text")
 	local cl = New("TextLabel", {
-		BackgroundTransparency = 1, Position = UDim2.fromOffset(18, 26),
-		Size = UDim2.new(1, -26, 0, 24), Font = Enum.Font.Gotham, TextSize = 12,
+		BackgroundTransparency = 1, Position = UDim2.fromOffset(textX, 26),
+		Size = UDim2.new(1, -(textX + 8), 0, 24), Font = Enum.Font.Gotham, TextSize = 12,
 		TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
 		Text = content, Parent = card,
 	})
 	lib:Bind(cl, "TextColor3", "muted")
-	task.delay(tonumber(ttl) or 3.5, function()
+	task.delay(dur, function()
 		if not card.Parent then return end
 		TweenService:Create(card, TweenInfo.new(0.3), {
 			BackgroundTransparency = 1,
@@ -1802,9 +2786,27 @@ function WinMT:Dialog(o)
 		Size = UDim2.fromScale(1, 1), BackgroundColor3 = t.bg,
 		BackgroundTransparency = 0.4, Text = "", ZIndex = 80, Parent = ctx.shell,
 	})
+	-- 按钮集（WindUI Popup 对齐）：默认 确认/取消
+	local buttons = o.Buttons or o.buttons
+	if type(buttons) ~= "table" or #buttons == 0 then
+		buttons = {
+			{ Title = "取消", Variant = "Tertiary" },
+			{ Title = "确认", Variant = "Primary", Callback = o.Callback or o.callback or o.onConfirm },
+		}
+	end
+	local bH = M.mobile and 32 or 34
+	local bGap = 8
+	local widths, total = {}, 0
+	for i, bd in ipairs(buttons) do
+		local w = math.clamp(18 + #tostring(bd.Title or "按钮") * 15, 64, 120)
+		widths[i] = w
+		total += w
+	end
+	total += bGap * (#buttons - 1)
+	local cardW = math.max(M.mobile and 260 or 380, total + 36)
 	local card = New("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(M.mobile and 260 or 380, M.mobile and 130 or 160),
+		Size = UDim2.fromOffset(cardW, M.mobile and 130 or 160),
 		BackgroundColor3 = t.panel2, ZIndex = 82, Parent = ctx.shell,
 	})
 	Corner(card, 14)
@@ -1828,40 +2830,217 @@ function WinMT:Dialog(o)
 		mask:Destroy()
 		card:Destroy()
 	end
-	local cancelBtn = New("TextButton", {
-		AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -18, 1, -14),
-		Size = UDim2.fromOffset(M.mobile and 70 or 90, 34),
-		BackgroundColor3 = t.panel3, Font = Enum.Font.GothamMedium, TextSize = 14,
-		Text = "取消", ZIndex = 83, Parent = card,
+	local cursor = 18
+	for i = #buttons, 1, -1 do
+		local bd = buttons[i]
+		local w = widths[i]
+		local variant = string.lower(tostring(bd.Variant or "Secondary"))
+		local b = New("TextButton", {
+			AnchorPoint = Vector2.new(1, 1),
+			Position = UDim2.new(1, -cursor, 1, -14),
+			Size = UDim2.fromOffset(w, bH),
+			Font = (variant == "primary") and Enum.Font.GothamBold or Enum.Font.GothamMedium,
+			TextSize = 14, Text = tostring(bd.Title or "按钮"), ZIndex = 83, Parent = card,
+		})
+		Corner(b, 8)
+		if variant == "primary" then
+			b.BackgroundColor3 = t.accent
+			b.TextColor3 = t.bg
+			lib:Bind(b, "BackgroundColor3", "accent")
+			lib:Bind(b, "TextColor3", "bg")
+		elseif variant == "danger" then
+			b.BackgroundColor3 = t.danger
+			b.TextColor3 = t.bg
+			lib:Bind(b, "BackgroundColor3", "danger")
+			lib:Bind(b, "TextColor3", "bg")
+		elseif variant == "tertiary" then
+			b.BackgroundTransparency = 1
+			b.TextColor3 = t.text
+			Stroke(b, "line", 1)
+			lib:Bind(b, "TextColor3", "text")
+		else
+			b.BackgroundColor3 = t.panel3
+			b.TextColor3 = t.text
+			Stroke(b, "line", 1)
+			lib:Bind(b, "BackgroundColor3", "panel3")
+			lib:Bind(b, "TextColor3", "text")
+		end
+		b.MouseButton1Click:Connect(function()
+			close()
+			if bd.Callback then
+				local ok, err = pcall(bd.Callback)
+				if not ok then warn("[QiurongToolbox] Dialog 按钮回调出错: " .. tostring(err)) end
+			end
+		end)
+		cursor += w + bGap
+	end
+	mask.MouseButton1Click:Connect(close)
+end
+
+-- 开屏公告（作者配置了 Notice 才弹出；Notice=字符串 或 { Title, Badge, Lines } ）
+function WinMT:Notice(o)
+	if type(o) == "string" then o = { Content = o } end
+	o = o or {}
+	local ctx = self._ctx
+	local lib = ctx.lib
+	local t = lib:Theme()
+	local M = ctx.M
+	local lines
+	if type(o.Lines) == "table" then
+		lines = o.Lines
+	elseif type(o.Content) == "table" then
+		lines = o.Content
+	else
+		lines = { tostring(o.Content or o.content or "") }
+	end
+	local lineH = M.mobile and 19 or 23
+	local cardH = (M.mobile and 168 or 200) + #lines * lineH
+	local mask = New("TextButton", {
+		Size = UDim2.fromScale(1, 1), BackgroundColor3 = t.bg,
+		BackgroundTransparency = 0.35, Text = "", ZIndex = 85, Parent = ctx.shell,
 	})
-	Corner(cancelBtn, 8)
-	Stroke(cancelBtn, "line", 1)
-	lib:Bind(cancelBtn, "BackgroundColor3", "panel3")
-	lib:Bind(cancelBtn, "TextColor3", "text")
+	local card = New("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(M.mobile and 300 or 420, math.min(cardH, 460)),
+		BackgroundColor3 = t.panel2, ZIndex = 86, Parent = ctx.shell,
+	})
+	Corner(card, 16)
+	Stroke(card, "accent", 1.5)
+	lib:Bind(card, "BackgroundColor3", "panel2")
+	local sp = M.mobile and 14 or 20
+	local y = sp
+	if o.Badge or o.badge then
+		local badge = New("Frame", {
+			Position = UDim2.fromOffset(sp, y), Size = UDim2.fromOffset(M.mobile and 96 or 120, 28),
+			BackgroundColor3 = t.accent, BackgroundTransparency = 0.68, Parent = card,
+		})
+		Corner(badge, 9)
+		Stroke(badge, "accent", 1)
+		lib:Bind(badge, "BackgroundColor3", "accent")
+		local bt = New("TextLabel", {
+			BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
+			Font = Enum.Font.GothamBold, TextSize = 12,
+			Text = tostring(o.Badge or o.badge), Parent = badge,
+		})
+		lib:Bind(bt, "TextColor3", "accent2")
+		y += 36
+	end
+	local big = New("TextLabel", {
+		BackgroundTransparency = 1, Position = UDim2.fromOffset(sp, y),
+		Size = UDim2.new(1, -sp * 2, 0, M.mobile and 24 or 32),
+		Font = Enum.Font.GothamBold, TextSize = M.big - 8,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = tostring(o.Title or o.title or "公告"), Parent = card,
+	})
+	lib:Bind(big, "TextColor3", "text")
+	y += (M.mobile and 24 or 32) + 8
+	for _, line in ipairs(lines) do
+		local dl = New("TextLabel", {
+			BackgroundTransparency = 1, Position = UDim2.fromOffset(sp, y),
+			Size = UDim2.new(1, -sp * 2, 0, lineH),
+			Font = Enum.Font.Gotham, TextSize = M.mobile and 13 or 15,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Text = tostring(line), Parent = card,
+		})
+		lib:Bind(dl, "TextColor3", "muted")
+		y += lineH
+	end
 	local okBtn = New("TextButton", {
-		AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -(M.mobile and 98 or 122), 1, -14),
-		Size = UDim2.fromOffset(M.mobile and 70 or 90, 34),
+		Position = UDim2.new(0.5, -50, 1, -44), Size = UDim2.fromOffset(100, 32),
 		BackgroundColor3 = t.accent, Font = Enum.Font.GothamBold, TextSize = 14,
-		Text = "确认", ZIndex = 83, Parent = card,
+		Text = "我知道了", ZIndex = 87, Parent = card,
 	})
 	Corner(okBtn, 8)
 	lib:Bind(okBtn, "BackgroundColor3", "accent")
 	lib:Bind(okBtn, "TextColor3", "bg")
+	local function close()
+		mask:Destroy()
+		card:Destroy()
+	end
 	mask.MouseButton1Click:Connect(close)
-	cancelBtn.MouseButton1Click:Connect(close)
-	okBtn.MouseButton1Click:Connect(function()
-		close()
-		local cb = o.Callback or o.callback or o.onConfirm
-		if cb then pcall(cb) end
-	end)
+	okBtn.MouseButton1Click:Connect(close)
+end
+
+-- ===== 窗口运行时方法（WindUI 对齐） =====
+function WinMT:SetTitle(v)
+	local ctx = self._ctx
+	if ctx.topTitle then ctx.topTitle.Text = tostring(v) end
+end
+
+function WinMT:SetAuthor(v)
+	local ctx = self._ctx
+	if ctx.topSub then ctx.topSub.Text = string.upper(tostring(v or "")) end
+end
+
+function WinMT:SetIcon(v)
+	local ctx = self._ctx
+	if ctx.markText then ctx.markText.Text = tostring(v or "秋") end
+end
+
+function WinMT:SetSize(w, h)
+	local ctx = self._ctx
+	local M = ctx.M
+	local nw = math.clamp(tonumber(w) or M.win.w, 420, 1600)
+	local nh = math.clamp(tonumber(h) or M.win.h, 320, 1000)
+	M.win.w = nw
+	M.win.h = nh
+	TweenService:Create(ctx.shell, TweenInfo.new(0.2), { Size = UDim2.fromOffset(nw, nh) }):Play()
+end
+
+function WinMT:GetWindowSize()
+	local ctx = self._ctx
+	return UDim2.fromOffset(ctx.M.win.w, ctx.M.win.h)
+end
+
+function WinMT:SetToggleKey(key)
+	local ctx = self._ctx
+	if ctx._toggleConn then
+		pcall(function() ctx._toggleConn:Disconnect() end)
+		ctx._toggleConn = nil
+	end
+	if key then
+		ctx._toggleConn = UserInputService.InputBegan:Connect(function(input, gpe)
+			if not gpe and input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == key then
+				ctx.win:ToggleVisibility()
+			end
+		end)
+	end
+end
+
+function WinMT:SetUIScale(n)
+	local ctx = self._ctx
+	ctx.userScale = true
+	ctx.scale.Scale = math.clamp(tonumber(n) or 1, 0.55, 1.4)
+end
+
+function WinMT:GetUIScale()
+	local ctx = self._ctx
+	return ctx.scale.Scale
+end
+
+function WinMT:IsResizable()
+	local ctx = self._ctx
+	return ctx.resizeGrip ~= nil
+end
+
+function WinMT:SetBackgroundTransparency(v)
+	local ctx = self._ctx
+	v = math.clamp(tonumber(v) or 0, 0, 0.9)
+	ctx.shell.BackgroundTransparency = v
+	if ctx.gradient then ctx.gradient.Enabled = v < 0.99 end
 end
 
 function WinMT:Destroy()
 	local ctx = self._ctx
+	if ctx._destroyed then return end
+	ctx._destroyed = true
 	ctx:CloseList()
 	for _, c in ipairs(ctx._conns) do
 		pcall(function() c:Disconnect() end)
 	end
+	if ctx._toggleConn then pcall(function() ctx._toggleConn:Disconnect() end) end
+	if ctx.openGui then pcall(function() ctx.openGui:Destroy() end) end
 	if ctx.gui then ctx.gui:Destroy() end
 	local arr = Lib._Windows
 	for i = #arr, 1, -1 do
@@ -1871,11 +3050,6 @@ end
 
 function WinMT:SetTheme(name)
 	return Lib:SetTheme(name)
-end
-
--- Theme 变化时同步卡侧条/徽章等固定色
-function Lib:RefreshWindowTheme(win)
-	-- 预留：卡侧条颜色跟随 token（当前版本侧条构建时取色，SetTheme 主体 token 已全覆盖）
 end
 
 Lib.WinMT = WinMT
