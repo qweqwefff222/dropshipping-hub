@@ -1,5 +1,5 @@
 --[[
-	QiurongToolbox v1.1.0  ·  秋容工具箱
+	QiurongToolbox v1.1.1  ·  秋容工具箱
 	====================================
 	基于《Roblox UI 三套静态视觉样本》(sample-*.png / generate_samples.py shared-v1 布局)
 	实现的 Roblox 原生 UI 库，WindUI 式链式 builder 风格：
@@ -124,7 +124,7 @@ local WinMT = {}
 local TabMT = {}
 
 local Lib = {
-	Version = "1.1.0",
+	Version = "1.1.1",
 	ThemeName = "tech-glass",
 	Flags = {},
 	_Windows = {},
@@ -133,7 +133,7 @@ local Lib = {
 	Folder = "QiurongToolbox",   -- 配置目录（CreateWindow 可覆盖）
 	_Pending = nil,              -- 启动时读到的持久化配置（flag -> 值）
 	_Loading = false,            -- 配置回灌期间抑制回调
-	_autoSave = true,            -- Flag 值变化自动保存
+	_autoSaveEnabled = true,     -- Flag 值变化自动保存（⚠ 与 _autoSave 方法是两回事，勿同名）
 }
 Lib._GName = "QiurongToolbox"
 
@@ -147,7 +147,7 @@ end
 
 local TOKEN_COLOR_PROPS = {
 	BackgroundColor3 = true, TextColor3 = true, Color = true,
-	BorderColor3 = true, PlaceholderColor3 = true,
+	BorderColor3 = true, PlaceholderColor3 = true, ScrollBarImageColor3 = true,
 }
 
 -- 注册任意实例的任意颜色属性到主题 token
@@ -345,7 +345,7 @@ function Lib:GetConfigs()
 end
 
 function Lib:_autoSave()
-	if not self._autoSave then return end
+	if not self._autoSaveEnabled then return end
 	if self._saveQueued then return end
 	self._saveQueued = true
 	task.delay(0.6, function()
@@ -775,16 +775,16 @@ local function ctlSlider(sec, o)
 			setVal(mn + (mx - mn) * math.clamp((input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1), true)
 		end
 	end)
-	UserInputService.InputChanged:Connect(function(input)
+	table.insert(ctx._conns, UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 			setVal(mn + (mx - mn) * math.clamp((input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1), true)
 		end
-	end)
-	UserInputService.InputEnded:Connect(function(input)
+	end))
+	table.insert(ctx._conns, UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = false
 		end
-	end)
+	end))
 	local h = makeHandle(lib, o, "slider",
 		function() return Values[key] end,
 		function(v, fire) setVal(v, fire ~= false) end,
@@ -881,7 +881,12 @@ local function openList(ctx, anchorInst, options, current, multi, onPick, onClos
 					Font = Enum.Font.GothamMedium, TextSize = ctx.M.body,
 					TextXAlignment = Enum.TextXAlignment.Left, Text = optText, Parent = optBtn,
 				})
-				lib:Bind(lbl, "TextColor3", isOn and "accent" or "text")
+				-- 动态 token：multi 行点击切换选中态后，SetTheme 重算仍取当前状态（静态 Bind 会刷回打开时的旧状态）
+				if multi then
+					lib:BindFn(lbl, "TextColor3", function() return sel[optText] and "accent" or "text" end)
+				else
+					lib:Bind(lbl, "TextColor3", isOn and "accent" or "text")
+				end
 				local mark
 				if multi then
 					mark = New("TextLabel", {
@@ -1028,7 +1033,7 @@ local function ctlDropdown(sec, o, multi)
 				for v in pairs(Values[key]) do table.insert(picked, v) end
 				fireChange(picked)
 				saveHook(lib)
-			end)
+			end, nil, { Search = o.SearchBarEnabled == true })
 		else
 			openList(ctx, btn, options, Values[key], false, function(optText)
 				Values[key] = optText and tostring(optText) or ""
@@ -1036,7 +1041,7 @@ local function ctlDropdown(sec, o, multi)
 				ctx:CloseList()
 				fireChange(optText and tostring(optText) or nil)
 				saveHook(lib)
-			end, nil, { AllowNone = o.AllowNone == true })
+			end, nil, { AllowNone = o.AllowNone == true, Search = o.SearchBarEnabled == true })
 		end
 		if ctx.activeList then ctx.activeList.anchor = btn end
 	end)
@@ -2273,8 +2278,11 @@ local function buildKeyGate(lib, mainGui, config, ksCfg, validateKey, onPass)
 end
 
 -- ===== CreateWindow =====
-function Lib:CreateWindow(self2, config)
-	if config == nil then config = self2 end
+-- 点定义以兼容三种调用：Lib:CreateWindow{cfg} / Lib.CreateWindow{cfg} / Lib:CreateWindow(cfg)
+-- （若用冒号定义，Lib.CreateWindow{cfg} 会把 config 表当成 self → self:Theme() 必炸）
+function Lib.CreateWindow(a, b)
+	local self, config
+	if a == Lib then self, config = Lib, b else self, config = Lib, a end
 	config = config or {}
 	local mobile = isMobile()
 	local M = metrics(mobile)
@@ -2283,13 +2291,13 @@ function Lib:CreateWindow(self2, config)
 	-- 持久化目录与回灌准备（Folder=false 关闭持久化）
 	if config.Folder ~= nil then
 		if config.Folder == false then
-			self._autoSave = false
+			self._autoSaveEnabled = false
 		else
 			self.Folder = tostring(config.Folder)
 		end
 	end
 	self._Pending = nil
-	if self._autoSave and fsAvailable() then
+	if self._autoSaveEnabled and fsAvailable() then
 		local rok, json = pcall(readfile, tostring(self.Folder) .. "/config.json")
 		if rok and type(json) == "string" then
 			local snap = decodeSnapshot(json)
@@ -2594,9 +2602,9 @@ function Lib:CreateWindow(self2, config)
 end
 
 -- ===== WinMT / TabMT 链式方法 =====
-local WinMT = {}
+-- ⚠ 表已在文件头前置声明区创建（CreateWindow 内 setmetatable 引用的是那个表）。
+-- 这里绝不能再 local 重复声明——那会生成新表，方法全挂到新表上，实例上的方法查找全部失败。
 WinMT.__index = WinMT
-local TabMT = {}
 TabMT.__index = TabMT
 
 function TabMT:Section(a, b)
