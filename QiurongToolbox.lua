@@ -1337,6 +1337,36 @@ local Lib = {
 }
 Lib._GName = "QiurongToolbox"
 
+-- ===== 内置图标 API =====
+-- 解析图标标识："rbxassetid://xxx" 原样 / "lucide:eye" 取后段 / "eye" 直接查表；失败 nil
+function Lib.Icon(name)
+	if type(name) ~= "string" or name == "" then return nil end
+	if string.sub(name, 1, 12) == "rbxassetid://" then return name end
+	local q = name
+	local ci = string.find(q, ":", 1, true)
+	if ci then q = string.sub(q, ci + 1) end
+	return ICONS_DATA[string.lower(q)]
+end
+
+-- 建图标 ImageLabel：color 传主题 token 字符串（随主题换色）或 Color3；解析失败返回 nil
+function Lib:IconImage(parent, icon, size, color)
+	local img = Lib.Icon(icon)
+	if not img then return nil end
+	local o = New("ImageLabel", {
+		BackgroundTransparency = 1,
+		Size = size or UDim2.fromOffset(24, 24),
+		Image = img, Parent = parent,
+	})
+	if color then
+		if type(color) == "string" then
+			self:Bind(o, "ImageColor3", color)
+		else
+			o.ImageColor3 = color
+		end
+	end
+	return o
+end
+
 function Lib:Theme()
 	return THEMES[self.ThemeName]
 end
@@ -3167,7 +3197,7 @@ local function buildMenuItem(lib, ctx, tabObj, order)
 	local tip = New("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(1, -2, 0.5, 0),
-		Size = UDim2.fromOffset(math.floor(M.itemH * 0.42), math.floor(M.itemH * 0.42)),
+		Size = UDim2.fromOffset(math.floor(M.itemH * 0.6), math.floor(M.itemH * 0.6)),
 		Rotation = 45, BackgroundColor3 = t.panel2, Parent = item,
 	})
 	local tipSt = Stroke(tip, "line", 1)
@@ -4027,6 +4057,7 @@ function WinMT:SelectTab(idOrObj)
 		applyMenuStyle(lib, old, false)
 	end
 	self._current = target
+	ctx._activeCat = nil -- 换页清空分类高亮（分类导航跟随当前页 Sections 重建）
 	if target._frame then
 		-- ⚠ 页帧创建时 Visible=false（防 UIListLayout 占位），挂回时必须显式恢复，
 		-- 否则内容全部存在但不可见（实测踩坑：只挂 Parent 内容区全空）
