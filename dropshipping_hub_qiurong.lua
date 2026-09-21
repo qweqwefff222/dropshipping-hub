@@ -2012,293 +2012,25 @@ local ChatPollThread = nil
         Author = "合作:b站大不列颠超入",
         GuiName = "DropshipHubUI",
         DefaultPage = "about",
-        MarqueeText = "秋容脚本V2.0 | 秋容之作",
+        MarqueeText = "大不列颠超入脚本-代发货大亨 | 合作:b站大不列颠超入 | 交流群 1105244454",
                 AnnouncementTitle = "公告详情",
         AnnouncementText = [=[
 
-【置顶】作者:秋容   求点赞 关注 谢谢你的支持是我的最大动力    作者快手:ROBLOX[秋容]
-脚本一直爽，封号两行泪  开挂一时嗨，父母后排看
-开挂不演戏，畜生把你算  躲在挂服里，转头去频道
-想要活得久，演戏必不少  想要活得长，功能开得少
-欢迎使用此脚本！此脚本仍然有很多bug 有bug一定要反馈主播 主播看到第一时间会修复
-若有一定想法的功能可向主播推荐  主播尽可能的给你做出来
-QQ群:1079353586欢迎加入一起聊天哦
+【大不列颠超入脚本 · 代发货大亨】
 
-=== v2.2 更新内容 (2026-08-04) ===
-注:此版本新增重载保留+医生传送重做
+作者：合作:b站大不列颠超入
+版本：正式版 1.0.0
+交流群：1105244454（脚本详细页可一键复制）
 
-新增:重载保留[重复执行脚本后之前开过的功能自动保留|没开过的开关不会被打开|旧窗口全部清掉只留最新一个]
+== 使用说明 ==
+右Shift 开关窗口，悬浮看板可拖动
+打开「流水线」页开启订单流水线，自动接单并完成全流程
+建议搭配：自动接单 / 补货 / AI 调参 一起开
+现金过低会自动刹车（保护模式），放心挂机
 
-修复:[自动治疗]=不再自动切换医疗工具[只有手上拿着医疗用品才治疗]
-
-修复:[医生传送]=传送过去先卸下工具0.5秒再重新拿起[然后持续发送治疗]
-修复:[医生传送]=取消选择后再选同一个人会重新卸下重装[不再跳过]
-
-优化:[自动拾取纱布]=拾取速度提升
-
-=== v2.1 更新内容 (2026-08-04) ===
-注:此版本新增服务器菜单+VIP菜单+大量修复
-
-新增:半缝合VIP版[服务器菜单]
-新增:搜索玩家[秒查|输入名字找到他在哪个服]
-新增:抢服务器[满员一直抢到进为止]
-新增:展开服务器[看玩家头像+名字]
-新增:地图缩略图[每行显示]
-新增:地图中文名[全地图翻译]
-新增:筛选[类型|平台|满员|地区]
-新增:排序[延迟|人数|波数]
-
-新增:VIP菜单[心跳在线目录|显示谁在线|点名字加入]
-
-修复:[服务器菜单]=打开自动刷新[不用手动点]
-修复:[自动修复]=提速[连续修3下|支持ConstructHealth建筑]
-修复:[自爆倒计时]=正确识别点燃
-修复:[自动跳刀]=手机端监听开火键[单次跳]
-修复:[碰撞箱强制爆头]=拿枪刺刀也能打
-修复:[滑块]=多指不再乱跳
-修复:[医生传送]=传到目标前面[治疗工具自动卸装重装]
-修复:[自动剪纱布]=提速
-修复:[逃脱攀爬]=性能优化[不卡了]
-新增:建筑数显示[信息面板建12/己5]
-
-=== v2.0 更新内容 (2026-08-02) ===
-注:此版本大修退出清理[退出脚本后所有残留都清干净]
-
-修复:[自动跳刀]=开启后退出脚本不再卡死崩溃
-修复:[强制爆头]=开局加载中开启不再报错
-修复:[亮度提升]=退出脚本后恢复原亮度[监听不残留]
-修复:[信息面板]=退出脚本后不再残留[也不会突然出现]
-修复:[退出清理]=高亮/悬浮窗/面板全部销毁[一个不留]
-
-=== v1.9 更新内容 (2026-08-02) ===
-注:此版本新增存档系统+重做医生传送窗口
-
-新增:[存档]菜单
-新增:保存配置[JSON存到本地|可命名]
-新增:加载配置[恢复所有设置]
-新增:删除配置[带确认]
-新增:叠加替换[开启=同名覆盖|关闭=同名自动编号]
-新增:设置自动加载[指定下次恢复]
-新增:去除自动加载
-修复:加载配置后功能真正生效[不只是开关显示]
-
-重做:[医生传送悬浮窗]
-新增:锁定区[当前目标固定顶部]
-新增:候选区[只列前6个|血量低→高]
-新增:整行点击[不用专门点按钮]
-新增:顶部固定收缩[从下面收起]
-新增:整体缩放[文字跟着变]
-
-修复:[自动治疗]=必须手上拿医疗用品才发远程
-修复:[治疗范围]=固定7米[去掉可调]
-修复:[受伤玩家不显示]=去掉血量稳定过滤
-修复:[重载清理]=不再销毁游戏自带高亮
-
-=== v1.8 更新内容 (2026-08-02) ===
-注:此版本重做医生传送+杀戮光环+快捷建造
-
-重构:[杀戮光环]=两个小组
-小组1:杀戮光环[正常打头]
-小组2:杀戮光环去血版[临时碰撞箱]
-新增:攻击方式[攻击最近一个|按优先级攻击]
-新增:互斥[开一个自动关另一个]
-
-新增小组:[医生]
-新增:传送悬浮窗[圆角滚动列表|缩小键|退出键]
-新增:传送开关[点开=锁定跟随|高亮|自动拿起医疗用品发远程]
-新增:悬浮窗大小[0.5~2倍]
-新增:过滤[只列1~89%血量|脚下超过45不传|回血掉血0.5秒复查不列]
-优化:自动治疗[找对医疗用品工具]
-优化:自动拾取纱布[交互提示捡取]
-
-新增:[快捷建造]
-新增:路障=蒺藜=木桩[三个独立悬浮窗|可拖动]
-新增:0.2秒长按拖动[快速点击放置]
-新增:白色圆角描边[透明无背景]
-新增:悬浮窗大小[0.5~2倍]
-
-修复:[自动修复建筑物]=模式正确[7米范围|0.1秒扫描]
-修复:[攻击回收]=取消后摇
-修复:[肘击]=类型过滤[不勾选不打]
-修复:[自动跳刀]=触发Swing[换武器也生效]
-修复:[碰撞箱/飞行/第三人称]=死亡重生自动恢复
-新增:[强制第三人称无限制版]
-
-新增:[显示布料位置]
-
-移除:[牧师]全部功能
-移除:[军官]自动冲锋
-
-=== v1.7 更新内容 (2026-07-30 18:40) ===
-注:此版本为底层重构=性能大幅提升|僵尸再多也不卡
-
-重构:[僵尸绘制]=全部改用Highlight高亮[普通僵尸不再用绿点]统一颜色管理
-重构:[碰撞箱系统]=从17层简化到6部位[每部位1个]减少10倍部件数量
-新增:[统一监听系统]=僵尸绘制和碰撞箱共享一个监听[不再各自扫各自]
-优化:[事件监听]=功能关掉后自动断开所有监听[不再后台吃资源]
-优化:[玩家ESP]=没人开玩家功能时不监听玩家事件
-优化:[碰撞箱重生]=碰撞箱开着才监听重生[关了就不管]
-优化:[防抓取]=关了自动断开重生监听
-优化:[消除名称]=关了自动断开监听
-修复:[ESP圆点报错]=移除了旧的绿点系统[已改用Highlight]
-修复:[普通僵尸双圆点]=不再出现重复标记
-修复:[碰撞箱残留]=关闭后彻底清理不留渣
-修复:[监听重复]=绘制和碰撞箱合并为一个监听路径
-
-=== v1.6 更新内容 (2026-07-30) ===
-注:此版本为超大更新=新增3个菜单+职业系统+防护全家桶
-
-添加:HOOK[菜单]
-新增:强制爆头[所有近战/刺刀命中强制判定爆头]
-
-添加:防护[菜单]
-新增:防红眼扑[被红眼扑倒自动传送挣脱+攀爬防再抓]
-新增:防抓取[僵尸抓取时自动向上推开]
-新增:肘击自救[6格内自动斧击晕僵尸]
-新增:自动格挡劈砍[工兵静默格挡斧头僵尸攻击]
-新增:队友灭火[7格内自动灭队友身上的火]
-
-添加:职业[菜单]=职业分类切换
-新增小组:[通用]
-自动跳刀=攻击瞬间自动跳跃[全近战武器通用]
-
-新增小组:[工兵]
-肘击僵尸类型=普通僵尸=红眼=提灯人=斧头[先选先打不选不打]
-肘击=斧击击晕[距离+数量可调]
-静默自动修复建筑物=自动修+自动拆[修复模式修受损建筑拆卸模式拆所有建筑血量低优先]
-攻击回收=取消攻击后摇
-
-新增小组:[军官]
-自动冲锋=自动触发Charge冲锋
-
-新增小组:[医生]
-自动治疗受伤玩家=血量低于阈值自动治疗[阈值可调0-99%]
-自动拾取纱布=自动捡医疗掉落
-自动传送到受伤玩家=坐标传送+持续跟随[血量优先=距离优先=范围可调]
-
-新增小组:[牧师]
-自动祝福感染玩家=感染高于阈值自动祝福[阈值可调0-99%]
-自动传送到受伤玩家=坐标传送+持续跟随
-
-新增小组:[乐手]
-自动强制百分百=演奏自动100%准确度
-
-重构:绘制[菜单]=子分类切换[僵尸/玩家/地图/面板]
-新增小组:[面板]=统计行/僵尸详情/职业详情/个人信息 共21个独立开关
-新增:统计行=僵尸总数=玩家总数=存活人数=死亡人数
-新增:僵尸详情=山伯乐=红眼=胸甲骑兵=自爆=提灯人=斧头
-新增:职业详情=军官=工兵=医生=牧师=步兵=水手=乐手=枪骑兵
-新增:个人信息=血量=感染=延迟
-注:关闭某项自动隐藏不留空格
-改名:要塞=地图[子分类]
-改名:人物菜单=人物
-改名:防护菜单=防护
-
-优化:右上角提示显示名称不再显示英文id
-优化:子分类标题可自定义[绘制分类/职业分类]
-修复:强制爆头和碰撞箱强制爆头真正生效
-修复:信息面板开关不影响子开关[子开关独立控制]
-修复:碰撞箱爆头定位最外层碰撞箱
-修复:自动修复建筑物无效果[缺少参数+扫描路径+判断修复拆卸模式]
-修复:自动跳刀无效果[拦截PrepareSwing远程事件]
-修复:牧师祝福读感染值[改为UserStates.Infected]
-修复:肘击间隔改为0.1秒
-修复:长按开关不再弹key文本
-
-=== v1.4 更新内容 (2026-07-29) ===
-[修复]飞行动画锁定不恢复
-[修复]右上角通知只显示"开启"不显示"关闭"
-[修复]新僵尸出现不自动添加碰撞箱
-[修复]玩家重生后名字重新显示
-[修复]自爆倒计时和自爆范围不生效
-[修复]脚本重载后残留效果
-[修复]强制第三人称死后不关闭
-[修复]下拉滑块卡顿/手指位置偏移
-[修复]收藏快捷栏无提示文字
-[修复]通知刷新率过低
-[新增]杀戮光环去除血迹版=60帧攻击|血迹隐藏脚下
-[新增]强制爆头=近战刺刀命中判定为头
-[新增]碰撞箱强制爆头=打碰撞箱范围判定爆头|血迹在碰撞箱位置
-[新增]攻击墙后自爆=只攻击墙后自爆|不浪费远程事件
-[新增]自爆倒计时显示=头顶3.5秒倒计时
-[新增]6部位分层碰撞箱=头胸双臂双腿不均等分配
-[新增]FeatureManager=统一生命周期管理
-[新增]快捷栏空状态文字提示
-[优化]删除旧高频光环=减少后台循环
-[优化]删除传送攻击+队友救援=减少无用代码
-[优化]删除State.OnLoad死代码×7
-[优化]自动转向更丝滑
-[优化]碰撞箱菜单独立=面板→碰撞箱→特殊→要塞→僵尸→玩家
-[优化]去除血迹版攻击频率提升至60帧
-[优化]强制爆头与碰撞箱强制爆头互斥开关
-[优化]自爆范围刷新率0.1s
-[优化]自动装备仅限近战武器
-[移除]墙后自爆循环200Hz=完全无效
-[移除]旧高频光环=已被去除血迹版替代
-[移除]传送攻击+队友救援=无用功能
-
-=== v1.3 更新内容 (2026-07-28) ===
-注:此版本重在新增音效快捷栏和一堆杂七杂八的问题下个版本将增添新功能
-重构:右上角提示重新更换动画[不知可不可以]注:后续将考虑优化
-新增:[音效提示和入场提示]
-新增:[快捷栏]注:这是比较实用的东西|使用方法:[开关按钮和滑动模块中间有五角星点击它变黄就行]
-修复:[ESP问题]:人物重生时开启只会显示4个标签[添加了初始化]解决了这一个问题
-修复:[杀戮光环]一些功能
-优化:[攻击墙后自爆逻辑]确保有效果
-优化:[自动装备武器]没效果
-优化:[自动转向]太垃圾优化了一下
-
-=== v1.2 更新内容 (2026-07-27) ===
-修复了[输入框没效果]=目前没有任何问题😍
-优化了[人物菜单]=亮度提升功能[添加监听属性遇到任何恢复亮度将会强行追踪并强行杀死或让他无限等待]
-优化了右上角提示[以后右上角提示将不再固定文字限制，而是跟随文字多少进行定制]
-添加:杀戮光环[菜单]
-新增小组:[僵尸锁定类型]
-自爆=斧头僵尸=红眼=胸甲骑兵=提灯人=山伯乐
-注:[先选先打|不选不打]
-新增:显示类型标签[作者调试用的]所以你们不用管🤓
-新增小组:[杀戮光环特殊选项]
-新增:可攻击状态才打[僵尸出生动画期间不攻击]
-新增:攻击墙后自爆
-新增:强制爆头
-新增:传送攻击僵尸
-新增:队友被扑传送攻击
-新增:自动装备武器
-新增:自动转向
-新增小组:[Bot 杀戮光环]
-新增:Bot 开关+攻击范围调节
-新增小组:[高频光环]
-新增:高频光环开关+攻击距离+攻击数量
-新增小组:[刺刀光环]
-新增:刺刀光环开关+攻击距离
-【界面改进】
-滑块旁边添加操作提示文字[防止某些傻逼不知道]🤓
-=== v1.1 更新内容 (2026-07-26) ===
-优化了一些人物菜单的问题
-目前存在问题:[输入框没效果]请等待修复
-新增人物菜功能如下↓↓↓
-添加:移动小组
-新增:[坐标加速]
-新增:[人物加速]
-新增:飞行功能开启功能后显示[飞行悬浮窗]
-飞行:[可调节UI大小包括飞行速度]
-添加:跳跃小组
-新增:[手动跳跃]点击游戏跳跃按钮|可无限跳跃|无视摔伤|无视断腿| 注:不要跳太快！！！
-新增:[自动跳跃]自动跳跃|无视摔伤|无视断腿
-添加:视角/物品栏小组
-新增:[强制第三人称]可调节0-400默认200
-新增:[强制显示物品栏]某些禁用物品栏情况下强行显示使用 比如:自救灭火[前提有水桶]
-添加:状态小组
-新增:[高亮提升]提升亮度去除阴影
-新增:[移动治疗]医生治疗时可移动[建议搭配强制显示物品栏]
-新增:[无减速]人物受到伤害或者被抓或者被PVP队友扔火[无视减速]
-新增:[移除摔伤]高空摔下不会摔伤减伤[太高摔断腿受着]
-
-=== v1.0 更新内容 (2026-07-25) ===
-新增：反馈菜单[可以向我反馈功能或者说意见]
-新增：聊天菜单[可以跟使用同脚本玩家进行交流，后续预计添加跟随服务器包括一些神秘功能]
-新增：绘制菜单[改用纯驱动监听优化大部分的性能问题包括内存消耗问题]
-
+== 温馨提示 ==
+有问题先看「工具 → 运行日志」里的报错
+觉得好用记得支持作者，谢谢！
 ]=] .. string.char(10) .. string.char(10) .. "" .. string.char(10) .. string.rep(string.char(10), 1500) .. "居然翻到这里了，我就给你一个彩蛋吧。询问群主彩蛋内容是什么？可获得惊喜" .. string.rep(string.char(10), 500) .. "既然都翻到这了，要不加个群呗" .. string.rep(string.char(10), 1000),WindowSize = Vector2.new(760, 500),
         WindowPresets = {
             { label = "迷你", value = "mini", size = Vector2.new(620, 420) },
@@ -5567,6 +5299,411 @@ function AddPage(page)
         return _data
     end
 
+    AddPage({
+        id = "config",
+        title = "存档",
+        icon = "C",
+        subtitle = "配置存档管理",
+        sections = {
+            {
+                title = "配置管理",
+                items = {
+                    {
+                        type = "input",
+                        key = "config.input.name",
+                        title = "配置名称",
+                        desc = "输入存档名称",
+                        placeholder = "例如: 配置1",
+                        default = "",
+                    },
+                    {
+                        type = "toggle",
+                        key = "config.toggle.overwrite",
+                        title = "叠加替换原名称",
+                        desc = "开启：同名直接替换 / 关闭：同名自动编号保存",
+                        default = true,
+                        internal = true,
+                    },
+                    {
+                        type = "button",
+                        key = "config.button.save",
+                        title = "保存配置",
+                        desc = "将当前所有控件状态保存到文件",
+                        actionText = "保存",
+                        internal = true,
+                        onChanged = function()
+                            local name = State.Inputs['config.input.name'] or ''
+                            if name == '' then
+                                State:AddLog('存档', '请输入配置名称', 'config.save.empty')
+                                return
+                            end
+                            local ok, msg = ConfigManager:SaveConfig(name)
+                            State:AddLog('存档', msg, ok and 'config.save.ok' or 'config.save.fail')
+                            ConfigManager:RefreshDropdown()
+                        end,
+                    },
+                    {
+                        type = "dropdown",
+                        key = "config.dropdown.select",
+                        title = "选择配置",
+                        desc = "选择一个已保存的配置",
+                        default = "无",
+                        options = {},
+                        optionsCallback = function()
+                            local names = ConfigManager and ConfigManager:ListConfigs() or {}
+                            local opts = {}
+                            for _, n in ipairs(names) do table.insert(opts, { label = n, value = n }) end
+                            return opts
+                        end,
+                    },
+                    {
+                        type = "button",
+                        key = "config.button.load",
+                        title = "加载配置",
+                        desc = "加载选中配置到当前界面",
+                        actionText = "加载",
+                        internal = true,
+                        onChanged = function()
+                            local name = State.Dropdowns['config.dropdown.select']
+                            if type(name) ~= 'string' or name == '无' then
+                                State:AddLog('存档', '请先选择配置', 'config.load.empty')
+                                return
+                            end
+                            local ok, msg = ConfigManager:LoadConfig(name)
+                            ConfigManager:RefreshDropdown()
+                            local ctrlLoad = State.Controls["config.dropdown.select"]
+                            if ctrlLoad and ctrlLoad.SetValue then ctrlLoad.SetValue(name, true) end
+                            if type(msg) ~= 'string' then msg = ok and '配置已加载' or '操作失败' end
+                            if State.Toggles['config.toggle.autosave'] then
+                                State.Toggles['config.toggle.autosave'] = false
+                                local ac = State.Controls['config.toggle.autosave']
+                                if ac and ac.SetValue then ac.SetValue(false, true) end
+                                State:AddLog('TOGGLE', '自动保存已关闭', 'config.autosave.off')
+                            end
+                            State:AddLog('存档', msg, ok and 'config.load.ok' or 'config.load.fail')
+                        end,
+                    },
+                    {
+                        type = "button",
+                        key = "config.button.delete",
+                        title = "删除配置",
+                        desc = "删除选中的配置文件",
+                        actionText = "删除",
+                        confirm = true,
+                        confirmText = '确认删除此配置？',
+                        internal = true,
+                        onChanged = function()
+                            local name = State.Dropdowns['config.dropdown.select']
+                            if type(name) ~= 'string' or name == '无' then
+                                State:AddLog('存档', '请先选择配置', 'config.delete.empty')
+                                return
+                            end
+                            local ok, msg = ConfigManager:DeleteConfig(name)
+                            task.wait()
+                            ConfigManager:RefreshDropdown()
+                            local ctrlDel = State.Controls['config.dropdown.select']
+                            if ctrlDel and ctrlDel.SetValue then ctrlDel.SetValue('无', true) end
+                            if type(msg) ~= 'string' then msg = ok and '已删除' or '操作失败' end
+                            State:AddLog('存档', msg, ok and 'config.delete.ok' or 'config.delete.fail')
+                        end,
+                    },
+                    {
+                        type = "button",
+                        key = "config.button.autoload",
+                        title = "自动加载",
+                        desc = "设置当前选中配置为下次启动时自动加载",
+                        actionText = "设置自动加载",
+                        internal = true,
+                        onChanged = function()
+                            local name = State.Dropdowns["config.dropdown.select"]
+                            if not name or name == "无" then
+                                State:AddLog("存档", "请先选择配置", "config.autoload.empty")
+                                return
+                            end
+                            ConfigManager:WriteAutoLoad(name)
+                            local ok, msg = ConfigManager:LoadConfig(name)
+                            ConfigManager:RefreshDropdown()
+                            if ok then
+                                local ctrl = State.Controls["config.dropdown.select"]
+                                if ctrl and ctrl.SetValue then ctrl.SetValue(name, true) end
+                            end
+                            -- 更新当前自动加载配置状态显示
+                            local ctrlStatus = State.Controls["config.status.current"]
+                            if ctrlStatus and ctrlStatus.SetValue then
+                                pcall(function() ctrlStatus.SetValue(nil, name) end)
+                            end
+                            if State.Toggles["config.toggle.autosave"] then
+                                State.Toggles["config.toggle.autosave"] = false
+                                local ac = State.Controls["config.toggle.autosave"]
+                                if ac and ac.SetValue then ac.SetValue(false, true) end
+                                State:AddLog("TOGGLE", "自动保存已关闭", "config.autosave.off")
+                            end
+                            State:AddLog("存档", ok and "已设置自动加载: " .. name or "操作失败", ok and "config.autoload.ok" or "config.autoload.fail")
+                        end,
+                    },
+                    {
+                        type = "status",
+                        key = "config.status.current",
+                        title = "当前自动加载配置",
+                        desc = "当前加载的配置名称",
+                        value = "无",
+                    },
+                    {
+                        type = "button",
+                        key = "config.button.clear_autoload",
+                        title = "去除当前自动加载配置",
+                        desc = "清除自动加载设置",
+                        actionText = "去除",
+                        internal = true,
+                        onChanged = function()
+                            ConfigManager:ClearAutoLoad()
+                            local ctrlStatus = State.Controls["config.status.current"]
+                            if ctrlStatus and ctrlStatus.SetValue then
+                                pcall(function() ctrlStatus.SetValue(nil, "无") end)
+                            end
+                            State:AddLog("存档", "已去除自动加载", "config.autoload.clear")
+                        end,
+                    },
+                },
+            },
+            {
+                title = "自动保存",
+                items = {
+                    {
+                        type = "toggle",
+                        key = "config.toggle.autosave",
+                        title = "自动保存与读取",
+                        desc = "记录你上次开关了哪些按钮，下次执行脚本时自动恢复",
+                        default = false,
+                        internal = true,
+                    },
+                },
+            },
+        },
+    })
+
+
+    local function RegisterItems(page, section, items)
+        for _, item in ipairs(items or {}) do
+            item.page = page.id
+
+            if item.key then
+                Registry.Ensure(item.key, {
+                    Type = item.type,
+                    Title = item.title,
+                    Page = page.id,
+                    Section = section and section.title or nil,
+                    Internal = item.internal == true,
+                })
+                -- 注册 onChanged 供加载配置时触发（不分页面是否渲染）
+                if item.onChanged and ConfigManager then
+                    ConfigManager._onChanged[item.key] = item.onChanged
+                end
+            end
+
+            if item.items then
+                RegisterItems(page, section, item.items)
+            end
+        end
+    end
+
+    local function RegisterPageKeys()
+        for _, page in ipairs(Pages.List) do
+            if page.sections then
+                for _, section in ipairs(page.sections) do
+                    RegisterItems(page, section, section.items)
+                end
+            end
+
+            if page.subcategories then
+                Registry.Ensure("page." .. page.id .. ".subcategory", {
+                    Type = "segment",
+                    Title = page.title .. "子分类",
+                    Page = page.id,
+                    Internal = true,
+                })
+
+                for _, subcategory in ipairs(page.subcategories) do
+                    for _, section in ipairs(subcategory.sections or {}) do
+                        RegisterItems(page, section, section.items)
+                    end
+                end
+            end
+        end
+
+        Registry.Ensure("topbar.marquee", { Type = "marquee", Title = "顶部走马灯", Internal = true })
+        Registry.Ensure("window.minimize", { Type = "icon-button", Title = "最小化", Internal = true })
+        Registry.Ensure("window.close", { Type = "icon-button", Title = "关闭", Internal = true })
+        Registry.Ensure("window.restore", { Type = "button", Title = "恢复窗口", Internal = true })
+    end
+
+    function UI.GetScreenParent()
+        local candidates = {}
+
+        local okHui, hui = pcall(function()
+            if gethui then
+                return gethui()
+            end
+            return nil
+        end)
+
+        if okHui and hui then
+            table.insert(candidates, hui)
+        end
+
+        table.insert(candidates, Services.CoreGui)
+
+        local localPlayer = Services.Players.LocalPlayer
+        if localPlayer then
+            table.insert(candidates, localPlayer:WaitForChild("PlayerGui"))
+        end
+
+        for _, candidate in ipairs(candidates) do
+            local testGui = Instance.new("ScreenGui")
+            local ok = pcall(function()
+                testGui.Parent = candidate
+            end)
+            testGui:Destroy()
+
+            if ok then
+                return candidate
+            end
+        end
+
+        return Services.Players.LocalPlayer:WaitForChild("PlayerGui")
+    end
+
+    function UI.GetWindowPresetSize()
+        for _, preset in ipairs(AppConfig.WindowPresets) do
+            if preset.value == State.WindowPreset then
+                return preset.size
+            end
+        end
+
+        return AppConfig.WindowSize
+    end
+
+    function UI.GetBoundedWindowSize(targetSize)
+        targetSize = targetSize or UI.GetWindowPresetSize()
+        if not UI.RootGui then
+            return targetSize
+        end
+
+        local rootSize = UI.RootGui.AbsoluteSize
+        if rootSize.X <= 0 or rootSize.Y <= 0 then
+            return targetSize
+        end
+
+        local scale = math.max(State.DpiScale or 1, 0.01)
+        local maxWidth = math.max(1, math.floor((rootSize.X - 24) / scale))
+        local maxHeight = math.max(1, math.floor((rootSize.Y - 24) / scale))
+
+        return Vector2.new(math.min(targetSize.X, maxWidth), math.min(targetSize.Y, maxHeight))
+    end
+
+    function UI.ApplyWindowBounds()
+        if UI.Main then
+            local targetSize = UI.GetBoundedWindowSize(UI.GetWindowPresetSize())
+            UI.Main.Size = UDim2.fromOffset(targetSize.X, targetSize.Y)
+            UI.Main.Position = ClampFrameToScreen(UI.Main, UI.Main.Position)
+        end
+
+        if UI.ShowButton then
+            UI.ShowButton.Position = ClampFrameToScreen(UI.ShowButton, UI.ShowButton.Position)
+        end
+    end
+
+    function UI.ScheduleApplyWindowBounds()
+        if UI.BoundsPending then return end
+        UI.BoundsPending = true
+        task.defer(function()
+            UI.BoundsPending = false
+            if UI.RootGui then UI.ApplyWindowBounds() end
+        end)
+    end
+
+
+
+
+    function UI.SetVisible(visible)
+        UI.VisibleToken = (UI.VisibleToken or 0) + 1
+        local token = UI.VisibleToken
+        local MinimizeDuration = 0.06
+
+        if visible then
+            if UI.Main then
+                UI.Main.Visible = true
+                UI.Main.Size = UDim2.fromOffset(1, 1)
+                task.defer(function()
+                    if token ~= UI.VisibleToken then return end
+                    Tween(UI.Main, {
+                        Size = UI._savedWindowSize or UDim2.fromOffset(760, 500),
+                    }, Theme.Animation.Slow, Enum.EasingStyle.Back)
+                end)
+            end
+            if UI.ShowButton then
+                Tween(UI.ShowButton, { BackgroundTransparency = 1, ImageTransparency = 1 }, MinimizeDuration)
+                if UI.ShowButtonStroke then Tween(UI.ShowButtonStroke, { Transparency = 1 }, MinimizeDuration) end
+                task.delay(MinimizeDuration + 0.02, function()
+                    if UI.ShowButton and token == UI.VisibleToken and visible then
+                        UI.ShowButton.Visible = false
+                        UI.ShowButton.ImageTransparency = 0
+                    end
+                end)
+            end
+        else
+            if UI.Main then
+                UI._savedWindowSize = UI.Main.Size
+                Tween(UI.Main, {
+                    Size = UDim2.fromOffset(1, 1),
+                }, Theme.Animation.Normal)
+                task.delay(Theme.Animation.Normal + 0.04, function()
+                    if token == UI.VisibleToken and not visible then
+                        UI.Main.Visible = false
+                        UI.Main.Size = UI._savedWindowSize
+                    end
+                end)
+            end
+            if UI.ShowButton then
+                UI.ShowButton.Visible = true
+                UI.ShowButton.BackgroundTransparency = 1
+                UI.ShowButton.ImageTransparency = 1
+                Tween(UI.ShowButton, { BackgroundTransparency = 1, ImageTransparency = 0 }, MinimizeDuration)
+                if UI.ShowButtonStroke then Tween(UI.ShowButtonStroke, { Transparency = 0 }, MinimizeDuration) end
+            end
+        end
+        State:AddLog("UI", visible and "已打开窗口" or "已隐藏窗口", "window.visibility")
+    end
+
+
+    function UI.Track(connection, scope)
+        if not connection then
+            return nil
+        end
+
+        if UI._trackedConnections[connection] then
+            return connection
+        end
+
+        if scope == "page" then
+            table.insert(UI.PageConnections, connection)
+        elseif scope == "log" then
+            table.insert(UI.LogConnections, connection)
+        else
+            table.insert(UI.Connections, connection)
+        end
+        UI._trackedConnections[connection] = true
+        return connection
+    end
+
+    function UI.ClearPageConnections()
+        DisconnectConnections(UI.PageConnections)
+    end
+
+    function UI.ClearLogConnections()
+        DisconnectConnections(UI.LogConnections)
+    end
+
     function UI.Destroy()
         -- 停止聊天轮询线程
         if ChatPollThread then task.cancel(ChatPollThread); ChatPollThread = nil end
@@ -5946,6 +6083,7 @@ function AddPage(page)
 
     -- ===== 反馈页面布局 =====
     -- 层级: UI.Content(ScrollingFrame) → root(Frame,铺满) → Box辅助 → 子区块
+function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里补空实现防未定义
 	local function RenderFeedback() return end
 	local function RenderChat() return end
     function UI.RenderPage(pageId)
