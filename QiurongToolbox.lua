@@ -9217,11 +9217,12 @@ end
 function Lib:IconImage(parent, icon, size, color)
 	local img = Lib.Icon(icon)
 	if not img then return nil end
-	local o = New("ImageLabel", {
-		BackgroundTransparency = 1,
-		Size = size or UDim2.fromOffset(24, 24),
-		Image = img, Parent = parent,
-	})
+	-- 注意：此处位于 New 定义之前，不能使用 New（前向引用会是全局 nil）
+	local o = Instance.new("ImageLabel")
+	o.BackgroundTransparency = 1
+	o.Size = size or UDim2.fromOffset(24, 24)
+	o.Image = img
+	o.Parent = parent
 	if color then
 		if type(color) == "string" then
 			self:Bind(o, "ImageColor3", color)
