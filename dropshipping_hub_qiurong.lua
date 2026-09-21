@@ -4762,6 +4762,7 @@ local ChatPollThread = nil
         title.Size = UDim2.new(1, -48, 1, 0)
 
         local content = New("Frame", {
+            AutomaticSize = Enum.AutomaticSize.Y,
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 0, 0),
             ClipsDescendants = true,
@@ -5800,11 +5801,11 @@ function AddPage(page)
         end
     end
 
-    function UI.SetPage(pageId)
+    function UI.SetPage(pageId, force)
         if not Pages.ById[pageId] then
             return
         end
-        if State.CurrentPage == pageId and UI.Content and UI.Content.Visible then
+        if not force and State.CurrentPage == pageId and UI.Content and UI.Content.Visible then
             return
         end
 
@@ -6181,7 +6182,10 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
             if sectionHasVisibleItem then
                 local sectionFrame = Components.Section(UI.Content, section.title, section.subtitle)
                 for _, item in ipairs(section.items or {}) do
-                    if UI.RenderItem(sectionFrame, item, false) then
+                    local okItem, renderItem = pcall(UI.RenderItem, sectionFrame, item, false)
+                    if not okItem then
+                        State:AddLog("ERROR", "控件渲染失败: " .. tostring(item.key or item.title) .. " " .. tostring(renderItem), item.key or "render")
+                    elseif renderItem then
                         renderedAny = true
                     end
                 end
@@ -6942,7 +6946,7 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
                 task.delay(Theme.Animation.Press + 0.04, function()
                     Tween(sideScale, { Scale = 1 }, Theme.Animation.Fast)
                 end)
-                UI.SetPage(page.id)
+                UI.SetPage(page.id, true)
                 State:AddLog("UI", "切换页面: " .. page.title, "sidebar." .. page.id)
             end)
 
@@ -7860,10 +7864,10 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
 				{ type = "toggle", key = "qr.ac.usewhite", title = "启用白名单", desc = "只接白名单里的商品",
 				  default = CFG("ac.useWhite", false), internal = true, onChanged = function(v) SET("ac.useWhite", v) end },
 				{ type = "multi", key = "qr.ac.white", title = "商品白名单", desc = "默认空 = 全部；多选",
-				  default = CFG("ac.white", {}), options = prodOpts(),
+				  default = CFG("ac.white", {}), optionsCallback = prodOpts,
 				  onChanged = function(v) SET("ac.white", v) end },
 				{ type = "multi", key = "qr.ac.black", title = "商品黑名单", desc = "多选；优先级高于白名单",
-				  default = CFG("ac.black", {}), options = prodOpts(),
+				  default = CFG("ac.black", {}), optionsCallback = prodOpts,
 				  onChanged = function(v) SET("ac.black", v) end },
 			} },
 		},
@@ -7885,7 +7889,7 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
 				  options = { Option("跟随进行中订单", "跟随进行中订单"), Option("跟随当前产品", "跟随当前产品"), Option("指定产品", "指定产品") },
 				  onChanged = function(v) SET("restock.mode", v) end },
 				{ type = "dropdown", key = "qr.restock.product", title = "指定产品", desc = "仅在来源 = 指定产品 时生效",
-				  default = CFG("restock.product", ""), options = prodOpts(),
+				  default = CFG("restock.product", ""), optionsCallback = prodOpts,
 				  onChanged = function(v) SET("restock.product", v) end },
 				{ type = "slider", key = "qr.restock.low", title = "补货阈值", desc = "库存低于此值就补",
 				  min = 1, max = 30, step = 1, default = CFG("restock.low", 2), format = "%d件",
@@ -7925,9 +7929,9 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
 				  min = 1, max = 60, step = 1, default = CFG("buyprod.interval", 6), format = "%ds",
 				  onChanged = function(v) SET("buyprod.interval", v) end },
 				{ type = "multi", key = "qr.bp.allow", title = "只买这些（白名单）", desc = "空 = 全部；多选",
-				  default = CFG("buyprod.allow", {}), options = prodOpts(), onChanged = function(v) SET("buyprod.allow", v) end },
+				  default = CFG("buyprod.allow", {}), optionsCallback = prodOpts, onChanged = function(v) SET("buyprod.allow", v) end },
 				{ type = "multi", key = "qr.bp.deny", title = "永不购买（黑名单）", desc = "多选；优先于白名单",
-				  default = CFG("buyprod.deny", {}), options = prodOpts(), onChanged = function(v) SET("buyprod.deny", v) end },
+				  default = CFG("buyprod.deny", {}), optionsCallback = prodOpts, onChanged = function(v) SET("buyprod.deny", v) end },
 				{ type = "button", key = "qr.bp.now", title = "立即解锁一次", desc = "按当前条件尝试解锁", actionText = "执行", internal = true,
 				  onChanged = function() local _, m = doBuyProd(false) BuyProd.last = tostring(m) info(m or "—", "qr.bp.now") end },
 			} },
@@ -7959,9 +7963,9 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
 				  min = 2, max = 120, step = 1, default = CFG("hire.interval", 6), format = "%ds",
 				  onChanged = function(v) SET("hire.interval", v) end },
 				{ type = "multi", key = "qr.hire.roles", title = "岗位白名单", desc = "空 = 所有岗位；多选",
-				  default = CFG("hire.roles", {}), options = roleOpts(), onChanged = function(v) SET("hire.roles", v) end },
+				  default = CFG("hire.roles", {}), optionsCallback = roleOpts, onChanged = function(v) SET("hire.roles", v) end },
 				{ type = "multi", key = "qr.hire.deny", title = "岗位黑名单", desc = "多选；这些岗位永不招",
-				  default = CFG("hire.denyRoles", {}), options = roleOpts(), onChanged = function(v) SET("hire.denyRoles", v) end },
+				  default = CFG("hire.denyRoles", {}), optionsCallback = roleOpts, onChanged = function(v) SET("hire.denyRoles", v) end },
 			} },
 			{ title = "工位与重掷", items = {
 				{ type = "toggle", key = "qr.hire.wslot", title = "自动购买员工工位", desc = "工位没解锁且钱够时自动买",
@@ -7996,7 +8000,7 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
 				  options = { Option("跟随广告位", "跟随广告位"), Option("跟随当前产品", "跟随当前产品"), Option("指定", "指定") },
 				  onChanged = function(v) SET("ad.productMode", v) end },
 				{ type = "dropdown", key = "qr.ad.product", title = "指定商品", desc = "仅在来源 = 指定 时生效",
-				  default = CFG("ad.product", ""), options = prodOpts(),
+				  default = CFG("ad.product", ""), optionsCallback = prodOpts,
 				  onChanged = function(v) SET("ad.product", v) end },
 				{ type = "dropdown", key = "qr.ad.duration", title = "广告时长", desc = "影响花费（300s 便宜 / 600s 贵）",
 				  default = tostring(CFG("ad.duration", 600)),
