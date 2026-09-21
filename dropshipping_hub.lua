@@ -2114,12 +2114,8 @@ if WindUI then
 	---------------------------------------------------------------------
 	local TabInfo = mkTab({ Title = "脚本详细", Icon = "info" })
 
-	local SecAbout = TabInfo:Section({ Title = "关于", Icon = "info", Opened = true })
-	para(SecAbout, "作者", "b站英吉利超入", "users")
-	para(SecAbout, "版本", "正式版 1.0.0", "tag")
-	para(SecAbout, "适配游戏", "代发货大亨（Dropshipping Tycoon）", "play")
-	para(SecAbout, "说明", "本页只做功能说明与使用指引，不含任何源码。", "info")
-	mk("Button", SecAbout, {
+	local SecGroup = TabInfo:Section({ Title = "交流群", Icon = "users", Opened = true })
+	mk("Button", SecGroup, {
 		Title = "QQ群（点击复制）", Desc = "群号 1105244454 · 点一下直接复制到剪贴板",
 		Icon = "clipboard-copy",
 		Callback = function()
@@ -2132,6 +2128,12 @@ if WindUI then
 				ok and "clipboard-copy" or "triangle-alert")
 		end,
 	})
+
+	local SecAbout = TabInfo:Section({ Title = "关于", Icon = "info", Opened = true })
+	para(SecAbout, "作者", "b站英吉利超入", "users")
+	para(SecAbout, "版本", "正式版 1.0.0", "tag")
+	para(SecAbout, "适配游戏", "代发货大亨（Dropshipping Tycoon）", "play")
+	para(SecAbout, "说明", "本页只做功能说明与使用指引，不含任何源码。", "info")
 
 	local SecPrinciple = TabInfo:Section({ Title = "核心原理（为什么稳）", Icon = "zap", Opened = false })
 	para(SecPrinciple, "订单驱动而非固定循环",
