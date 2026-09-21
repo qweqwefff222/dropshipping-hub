@@ -1815,17 +1815,22 @@ local function buildTopBar(lib, ctx, cfg)
 		Text = tostring(cfg.NoticeBadge or "置顶公告"), Parent = badge,
 	})
 	lib:Bind(badgeText, "TextColor3", "bg")
+	-- 跑马灯：徽章右侧的裁剪容器内滚动（ClipsDescendants），文字不会滚到徽章上面
+	local clip = New("Frame", {
+		Position = UDim2.fromOffset(badgeW + (M.mobile and 22 or 32), 0),
+		Size = UDim2.new(1, -(badgeW + (M.mobile and 22 or 32) + 10), 1, 0),
+		BackgroundTransparency = 1, ClipsDescendants = true, Parent = ticker,
+	})
 	local marquee = New("TextLabel", {
 		BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, badgeW + (M.mobile and 22 or 32), 0.5, 0),
-		Size = UDim2.new(1, -(badgeW + (M.mobile and 30 or 42)), 1, 0),
+		Position = UDim2.fromOffset(0, 0.5),
+		Size = UDim2.new(0, 0, 1, 0), AutomaticSize = Enum.AutomaticSize.X,
 		Font = Enum.Font.GothamMedium, TextSize = M.mobile and 13 or 17,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		Text = tostring(cfg.Marquee or "欢迎秋容工具箱 · 求点赞关注，谢谢支持"), Parent = ticker,
+		Text = tostring(cfg.Marquee or "欢迎秋容工具箱 · 求点赞关注，谢谢支持"), Parent = clip,
 	})
 	lib:Bind(marquee, "TextColor3", "text")
 	ctx.marquee = marquee
-	ctx.marqueeX = 0
 	-- 最小化 / 主题切换 / 关闭
 	local btnH = M.top - M.pad * 2
 	local btnW = math.floor((ctlW - M.gap * 2) / 3)
@@ -2407,7 +2412,43 @@ function Lib.CreateWindow(a, b)
 			Size = UDim2.fromOffset(M.win.w, ctx.collapsed and collapsedH or M.win.h),
 		}):Play()
 	end
-	ctx.minBtn.MouseButton1Click:Connect(function() win:ToggleCollapse() end)
+	-- WindUI 式最小化：窗口缩小滑向屏幕底部，恢复时从底部弹回（悬浮球/呼出键唤回）
+	function win:MinimizeAnimated()
+		if ctx.minimizeAnim or ctx.minimized then return end
+		ctx.minimizeAnim = true
+		ctx:CloseList()
+		ctx._minRestorePos = shell.Position
+		ctx._minRestoreScale = scale.Scale
+		local ti = TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		TweenService:Create(shell, ti, { Position = UDim2.fromScale(0.5, 1.3) }):Play()
+		TweenService:Create(scale, ti, { Scale = math.max(scale.Scale * 0.55, 0.25) }):Play()
+		task.delay(0.34, function()
+			ctx.gui.Enabled = false
+			if ctx.openBtn then ctx.openBtn.Visible = true end
+			ctx.minimized = true
+			ctx.minimizeAnim = false
+		end)
+	end
+	function win:RestoreFromMinimize()
+		if ctx.minimizeAnim or not ctx.minimized then return end
+		ctx.minimizeAnim = true
+		ctx.gui.Enabled = true
+		if ctx.openBtn then ctx.openBtn.Visible = false end
+		shell.Position = UDim2.fromScale(0.5, 1.3)
+		scale.Scale = math.max((ctx._minRestoreScale or 1) * 0.55, 0.25)
+		TweenService:Create(shell, TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Position = ctx._minRestorePos or UDim2.fromScale(0.5, 0.5),
+		}):Play()
+		TweenService:Create(scale, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Scale = ctx._minRestoreScale or 1,
+		}):Play()
+		task.delay(0.44, function()
+			if not ctx.userScale and fitScale then fitScale() end
+			ctx.minimized = false
+			ctx.minimizeAnim = false
+		end)
+	end
+	ctx.minBtn.MouseButton1Click:Connect(function() win:MinimizeAnimated() end)
 	ctx.handle.MouseButton1Click:Connect(function() win:ToggleCollapse() end)
 
 	-- 显示 / 隐藏（WindUI 对齐：关闭可由悬浮球重开）
@@ -2486,7 +2527,7 @@ function Lib.CreateWindow(a, b)
 			table.insert(ctx._conns, UserInputService.InputEnded:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 					if obDrag and not obMoved and obBtn.Visible then
-						win:Show()
+						if ctx.minimized then win:RestoreFromMinimize() else win:Show() end
 					end
 					obDrag = false
 				end
@@ -2526,19 +2567,17 @@ function Lib.CreateWindow(a, b)
 		end))
 	end
 
-	-- 跑马灯滚动（隐藏时暂停）
-	local baseX = (M.mobile and 64 or 104) + (M.mobile and 22 or 32)
+	-- 跑马灯滚动（隐藏时暂停；文字在徽章右侧裁剪容器内循环，从右进左出、不覆盖徽章）
 	local marqueeOff = 0
 	table.insert(ctx._conns, RunService.Heartbeat:Connect(function(dt)
 		local m = ctx.marquee
 		if m and m.Parent and ctx.gui.Enabled then
 			local textW = m.TextBounds.X
-			local visW = math.max(m.AbsoluteSize.X, 1)
+			local clipW = math.max(m.Parent.AbsoluteSize.X, 1)
 			marqueeOff += dt * 55
-			local total = textW + visW + 80
+			local total = textW + clipW + 20
 			if marqueeOff > total then marqueeOff = 0 end
-			-- 经典跑马灯：从右侧进入、向左滚出（起点在可视区右缘外，避免"长期滚在外面看不见"）
-			m.Position = UDim2.new(0, baseX + visW - marqueeOff, 0.5, 0)
+			m.Position = UDim2.new(0, clipW - marqueeOff, 0.5, 0)
 		end
 	end))
 
@@ -2551,15 +2590,20 @@ function Lib.CreateWindow(a, b)
 		end)
 	end
 
-	-- toast 容器
+	-- toast 容器（挂独立全屏 ScreenGui：通知固定在 Roblox 屏幕右上角，不随窗口、不挡窗口内容）
+	local toastGui = New("ScreenGui", {
+		Name = "QiurongToolbox_Toast", ResetOnSpawn = false, IgnoreGuiInset = true,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 999, Parent = safeParent(),
+	})
 	local toastLayer = New("Frame", {
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.new(1, -10, 0, 10),
 		Size = UDim2.fromOffset(M.mobile and 220 or 300, 800),
-		BackgroundTransparency = 1, ZIndex = 70, Parent = shell,
+		BackgroundTransparency = 1, ZIndex = 70, Parent = toastGui,
 	})
 	VList(toastLayer, 8)
 	ctx.toastLayer = toastLayer
+	ctx.toastGui = toastGui
 
 	table.insert(self._Windows, win)
 	rawset(_G, self._GName, self)
@@ -2727,6 +2771,8 @@ function WinMT:ToggleVisibility()
 	local ctx = self._ctx
 	if ctx.gui.Enabled then
 		self:Hide()
+	elseif ctx.minimized then
+		self:RestoreFromMinimize()
 	else
 		self:Show()
 	end
@@ -3064,6 +3110,7 @@ function WinMT:Destroy()
 	end
 	if ctx._toggleConn then pcall(function() ctx._toggleConn:Disconnect() end) end
 	if ctx.openGui then pcall(function() ctx.openGui:Destroy() end) end
+	if ctx.toastGui then pcall(function() ctx.toastGui:Destroy() end) end
 	if ctx.gui then ctx.gui:Destroy() end
 	local arr = Lib._Windows
 	for i = #arr, 1, -1 do
