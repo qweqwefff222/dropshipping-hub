@@ -2,16 +2,24 @@
   QiurongUI · WindUI 风格声明式 UI 库
   来源：秋容UI框架 v2.2（已剔除游戏功能模块）+ 实机标定修复（#1~#11）
 
-  用法：
+  用法（WindUI 风格链式 API）：
     local QiurongUI = loadstring(game:HttpGet("<本文件 raw 直链>"))()
-    QiurongUI.CreateWindow{
-        Name = "我的脚本", Version = "1.0.0", Author = "me",
-        GuiName = "MyScriptUI", DefaultPage = "home",
+    local Window = QiurongUI:CreateWindow{
+        Title = "我的脚本", Version = "1.0.0", Author = "me",
         MarqueeText = "跑马灯文本",
         AnnouncementTitle = "公告", AnnouncementText = "公告正文",
         OnClose = function() end,   -- 关闭脚本时触发（可选）
-        Pages = { { id="home", title="主页", icon="H", sections={ { title="分组", items={ {type="toggle", key="t1", title="开关"}, ... } } } }, ... },
     }
+    local Tab = Window:Tab{ Title = "主页", Icon = "H" }
+    local Sec = Tab:Section("自动挂机")        -- 或 Tab:Toggle{...} 直达（自动建分组）
+    Sec:Toggle{ Title = "开关", Default = true, Callback = function(v) print(v) end }
+    Sec:Slider{ Title = "倍率", Min = 1, Max = 10, Default = 2, Callback = function(v) end }
+    Sec:Dropdown{ Title = "选择", Options = {"a","b"}, Callback = function(v) end }
+    Sec:Status{ Title = "实时坐标", Value = function() return "..." end }  -- 传函数=0.4s 自动刷新
+    local h = Sec:Toggle{ Title = "开关2" }   -- 句柄：h:Get() / h:Set(v)
+    QiurongUI.Flags["开关2"]                  -- 或用 Flag = "开关2" 注册后全局取句柄
+    Window:SelectTab("主页")  Window:Notify("完成")  Window:Dialog{...}  Window:Destroy()
+    -- 声明式兼容：CreateWindow{ Pages = { {id=..., sections={...}} } } 与 AddPage 照常可用
 
   页面结构：AddPage{ id, title, icon, subtitle, sections|subcategories=[{id,title,sections=[{title,items=[...]}]}] }
   控件 18 种：toggle slider number input dropdown multi segment button keybind
@@ -5652,33 +5660,246 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
     end
 
     local previous = rawget(_G, "BanFengHeUIFramework")
-	--===== 对外导出（WindUI 风格入口）=====
+	--===== 对外导出 + WindUI 风格链式 Builder 门面 =====
+	-- 声明式（AddPage/Pages 大表）与链式（Window:Tab → Tab:Section → Sec:Toggle）两种风格完全兼容、可混用。
 	local API
-	local function CreateWindow(config)
-		config = config or {}
-		for _, field in ipairs({"Name","Version","Author","GuiName","DefaultPage","MarqueeText","AnnouncementTitle","AnnouncementText"}) do
-			if config[field] ~= nil then AppConfig[field] = config[field] end
-		end
-		if config.OnClose then AppConfig.OnClose = config.OnClose end
-		for _, pg in ipairs(config.Pages or {}) do AddPage(pg) end
-		-- 安全网：默认页不存在时落到第一个页面，避免首屏空白
-		if not Pages.ById[AppConfig.DefaultPage or ""] and #Pages.List > 0 then
-			AppConfig.DefaultPage = Pages.List[1].id
-		end
-		UI.Build()
-		if ConfigManager then ConfigManager:_registerCallbacks() end
-		local _al = ConfigManager:ReadAutoLoad()
-		if _al and _al ~= "" then ConfigManager:LoadConfig(_al) end
-		return API
-	end
 	API = {
 		UI = UI, State = State, Pages = Pages, Components = Components,
 		Registry = Registry, Theme = Theme, AppConfig = AppConfig,
 		AddPage = AddPage, Option = Option, ConfigManager = ConfigManager,
-		CreateWindow = CreateWindow,
-		Version = "1.1.0",
+		Flags = {},
+		Version = "1.2.0",
 		Notify = function(msg, level) State:AddLog(level or "INFO", msg, "ext.notify") end,
 	}
 	_G.QiuRongUI = API
+
+	local _autoSeq = 0
+	local function _first(...)
+		local t = { ... }
+		for _, v in ipairs(t) do
+			if v ~= nil then return v end
+		end
+		return nil
+	end
+
+	local function _rebuildSidebar()
+		if UI.Main and UI.Sidebar then
+			UI.Sidebar:Destroy()
+			UI.Sidebar = nil
+			UI.SidebarButtons = {}
+			UI.BuildSidebar(UI.Main)
+			UI.UpdateSidebar()
+		end
+	end
+
+	local function _liveRefresh(pageId)
+		if UI.Main and pageId and State.CurrentPage == pageId then
+			UI.SetPage(pageId, true)
+		end
+	end
+
+	local function _normItem(kind, o)
+		o = o or {}
+		_autoSeq += 1
+		local it = {
+			type = kind,
+			key = tostring(_first(o.Key, o.key, o.Flag, o.flag) or ("qk." .. _autoSeq)),
+			title = tostring(_first(o.Title, o.title, "控件")),
+			desc = _first(o.Desc, o.desc),
+			internal = true,
+			onChanged = _first(o.Callback, o.callback, o.onChanged),
+		}
+		if kind == "toggle" then
+			it.default = _first(o.Default, o.default) == true
+		elseif kind == "slider" then
+			it.min = _first(o.Min, o.min, 0); it.max = _first(o.Max, o.max, 100)
+			it.step = _first(o.Step, o.step, 1); it.default = _first(o.Default, o.default, it.min)
+			it.format = _first(o.Format, o.format)
+		elseif kind == "number" then
+			it.min = _first(o.Min, o.min, 0); it.max = _first(o.Max, o.max, 999)
+			it.step = _first(o.Step, o.step, 1); it.default = _first(o.Default, o.default, it.min)
+		elseif kind == "input" then
+			it.default = _first(o.Default, o.default, "")
+			it.placeholder = _first(o.Placeholder, o.placeholder)
+		elseif kind == "dropdown" or kind == "segment" then
+			it.options = _first(o.Options, o.options, {})
+			it.default = _first(o.Default, o.default)
+		elseif kind == "multi-dropdown" then
+			it.options = _first(o.Options, o.options, {})
+			local d = _first(o.Default, o.default)
+			it.default = type(d) == "table" and d or {}
+		elseif kind == "keybind" then
+			it.default = _first(o.Default, o.default, "未绑定")
+		elseif kind == "color" then
+			it.default = _first(o.Default, o.default, Color3.new(1, 1, 1))
+		elseif kind == "status" or kind == "progress" then
+			local v = _first(o.Value, o.value, o.Default, o.default)
+			it.value = type(v) == "function" and v or v
+			if kind == "progress" then it.color = _first(o.Color, o.color) end
+		elseif kind == "button" then
+			it.actionText = _first(o.ActionText, o.actionText, "执行")
+		elseif kind == "tags" then
+			it.tags = _first(o.Tags, o.tags, {})
+		elseif kind == "table" then
+			it.rows = _first(o.Rows, o.rows, {})
+			it.columns = _first(o.Columns, o.columns)
+		elseif kind == "list" then
+			it.badge = _first(o.Badge, o.badge)
+		elseif kind == "category" then
+			it.target = _first(o.Target, o.target)
+		end
+		return it
+	end
+
+	local function _handle(kind, key)
+		local bucket = STATE_BUCKET_NAMES[kind] or "Inputs"
+		local h = { Key = key, Type = kind }
+		function h.Get()
+			local c = State.Controls[key]
+			if c and c.GetValue then return c.GetValue() end
+			return State:Get(bucket, key, nil)
+		end
+		function h:Set(v)
+			local c = State.Controls[key]
+			if c and c.SetValue then pcall(c.SetValue, c, v) return true end
+			return State:Set(bucket, key, v)
+		end
+		if kind == "dropdown" or kind == "multi-dropdown" then
+			function h:SetOptions(list)
+				local c = State.Controls[key]
+				if c and c.SetOptions then pcall(c.SetOptions, c, list) end
+			end
+		end
+		return h
+	end
+
+	local function _sectionBuilder(page, sec)
+		local S = {}
+		local function addItem(kind, o)
+			local item = _normItem(kind, o)
+			table.insert(sec.items, item)
+			local flag = o and (o.Flag or o.flag)
+			local h = _handle(kind, item.key)
+			if flag then API.Flags[tostring(flag)] = h end
+			_liveRefresh(page.id)
+			return h
+		end
+		S.Button      = function(_, o) return addItem("button", o) end
+		S.Toggle      = function(_, o) return addItem("toggle", o) end
+		S.Slider      = function(_, o) return addItem("slider", o) end
+		S.Input       = function(_, o) return addItem("input", o) end
+		S.Number      = function(_, o) return addItem("number", o) end
+		S.Dropdown    = function(_, o) return addItem("dropdown", o) end
+		S.Multi       = function(_, o) return addItem("multi-dropdown", o) end
+		S.Segment     = function(_, o) return addItem("segment", o) end
+		S.Keybind     = function(_, o) return addItem("keybind", o) end
+		S.ColorPicker = function(_, o) return addItem("color", o) end
+		S.Status      = function(_, o) return addItem("status", o) end
+		S.Progress    = function(_, o) return addItem("progress", o) end
+		S.Tags        = function(_, o) return addItem("tags", o) end
+		S.Table       = function(_, o) return addItem("table", o) end
+		S.List        = function(_, o) return addItem("list", o) end
+		S.Category    = function(_, o) return addItem("category", o) end
+		S.Log         = function(_, o) return addItem("log", o) end
+		S.Collapsible = function(_, o)
+			o = o or {}
+			_autoSeq += 1
+			local item = {
+				type = "collapsible",
+				key = tostring(_first(o.Key, o.key, "qk.col." .. _autoSeq)),
+				title = tostring(_first(o.Title, o.title, "分组")),
+				internal = true,
+				items = {},
+			}
+			table.insert(sec.items, item)
+			_liveRefresh(page.id)
+			return _sectionBuilder(page, { title = item.title, items = item.items })
+		end
+		return S
+	end
+
+	local TabMT = {}
+	TabMT.__index = TabMT
+	function TabMT:Section(a, b)
+		if type(a) == "table" then
+			b = _first(a.Subtitle, a.subtitle)
+			a = _first(a.Title, a.title)
+		end
+		local sec = { title = tostring(a or "分组"), subtitle = b, items = {} }
+		table.insert(self._page.sections, sec)
+		_liveRefresh(self._page.id)
+		return _sectionBuilder(self._page, sec)
+	end
+	local function _tabLazy(self)
+		if not self._auto then self._auto = TabMT.Section(self, "控件") end
+		return self._auto
+	end
+	for _, kind in ipairs({ "Button", "Toggle", "Slider", "Input", "Number", "Dropdown", "Multi",
+		"Segment", "Keybind", "ColorPicker", "Status", "Progress", "Tags", "Table", "List", "Category", "Log" }) do
+		TabMT[kind] = function(self, o) local s = _tabLazy(self) return s[kind](s, o) end
+	end
+
+	local WinMT = {}
+	WinMT.__index = WinMT
+	function WinMT:Tab(o)
+		o = o or {}
+		_autoSeq += 1
+		local page = {
+			id = tostring(_first(o.Id, o.id, o.Title, o.title, "tab" .. _autoSeq)),
+			title = tostring(_first(o.Title, o.title, o.Id, o.id, "标签页")),
+			icon = _first(o.Icon, o.icon, "T"),
+			subtitle = _first(o.Subtitle, o.subtitle),
+			sections = {},
+		}
+		AddPage(page)
+		_rebuildSidebar()
+		return setmetatable({ _page = page }, TabMT)
+	end
+	function WinMT:SelectTab(id)
+		UI.SetPage(id, true)
+	end
+	function WinMT:Notify(a, b)
+		if type(a) == "table" then
+			local content = _first(a.Content, a.content)
+			State:AddLog(_first(a.Level, a.level, "INFO"),
+				tostring(_first(a.Title, a.title, "通知")) .. (content and (" · " .. tostring(content)) or ""), "win.notify")
+		else
+			State:AddLog(b or "INFO", tostring(a or ""), "win.notify")
+		end
+	end
+	function WinMT:Dialog(o)
+		o = o or {}
+		UI.Confirm(_first(o.Title, o.title, "确认"), _first(o.Content, o.content, "确认执行？"),
+			_first(o.onConfirm, o.Callback, o.callback))
+	end
+	function WinMT:Destroy()
+		UI.Destroy()
+	end
+	function WinMT:ToggleVisibility()
+		UI.SetVisible(not (UI.Main and UI.Main.Visible))
+	end
+	local WinObj = setmetatable({}, WinMT)
+
+	local function CreateWindow(self, config)
+		if config == nil then config = self end
+		config = config or {}
+		if config.Title and config.Name == nil then config.Name = config.Title end
+		for _, field in ipairs({ "Name", "Version", "Author", "GuiName", "DefaultPage", "MarqueeText", "AnnouncementTitle", "AnnouncementText" }) do
+			if config[field] ~= nil then AppConfig[field] = config[field] end
+		end
+		if config.OnClose then AppConfig.OnClose = config.OnClose end
+		for _, pg in ipairs(config.Pages or {}) do AddPage(pg) end
+		if not Pages.ById[AppConfig.DefaultPage or ""] and #Pages.List > 0 then
+			AppConfig.DefaultPage = Pages.List[1].id
+		end
+		if not UI.Main then
+			UI.Build()
+			if ConfigManager then ConfigManager:_registerCallbacks() end
+			local _al = ConfigManager:ReadAutoLoad()
+			if _al and _al ~= "" then ConfigManager:LoadConfig(_al) end
+		end
+		return WinObj
+	end
+	API.CreateWindow = CreateWindow
 end
 return _G.QiuRongUI
