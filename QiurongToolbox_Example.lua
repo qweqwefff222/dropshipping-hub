@@ -1,5 +1,5 @@
 --[[
-	QiurongToolbox 使用示例 v1.1.0  ·  复刻《功能更新公告》样本页 + 全控件 + WindUI 对齐功能演示
+	QiurongToolbox 使用示例 v1.2.1  ·  复刻《功能更新公告》样本页 + 全控件 + 五包图标库 + WindUI 对齐功能演示
 	================================================================
 	loadstring(game:HttpGet("https://raw.githubusercontent.com/qweqwefff222/dropshipping-hub/main/QiurongToolbox_Example.lua"))()
 
@@ -15,6 +15,7 @@ local Lib = loadstring(game:HttpGet(
 
 local Window = Lib:CreateWindow{
 	Title       = "秋容工具箱",
+	Icon        = "lucide:sparkles",      -- v1.2.1：窗口 mark 支持五包图标名/rbxassetid/文字
 	Subtitle    = "QIURONG / ROBLOX UI",
 	Theme       = "tech-glass",
 	Marquee     = "作者：秋容  ·  求点赞关注，谢谢支持  ·  脚本一直爽，封号两行泪  ·  请合理使用功能",
@@ -211,7 +212,7 @@ secWin:Button{
 	Title = "SetTitle / SetAuthor / SetIcon", Callback = function()
 		Window:SetTitle("标题改于 " .. os.date("%M:%S"))
 		Window:SetAuthor("subtitle changed")
-		Window:SetIcon("落")
+		Window:SetIcon("craft:2d-axis-stroke")   -- v1.2.1：SetIcon 支持图标名/rbxassetid/文字三态
 	end,
 }
 secWin:Button{
@@ -239,5 +240,37 @@ secWin:Button{
 	end,
 }
 
-Window:Notify("秋容工具箱 v1.1.0", "按 RightShift 呼出 / 隐藏窗口；顶栏 ◐ 切换主题")
-print("[QiurongToolbox] 示例加载完成 v1.1.0；配置目录:", Lib.Folder)
+-- ===== v1.2.1：内置五包图标库（16800+ 图标） =====
+local secIcons = adv:Section("内置图标库 · 五包 16800+")
+local iconCycle = {
+	"craft:alarm-stroke",    -- craft 图集（Spritesheet 裁剪）
+	"geist:accessibility",   -- geist 图集
+	"sfsymbols:00Circle",    -- sfsymbols（键名大小写敏感）
+	"gravity:abbr-api",      -- gravity
+	"lucide:zap",            -- lucide
+	"solar:home-2-bold",     -- solar
+	"秋",                    -- 回退文字
+}
+local iconIdx = 0
+secIcons:Button{
+	Title = "SetIcon 循环切换窗口图标",
+	Desc  = "craft/geist 为图集裁剪，其余为独立资产；裸名自动跨包兜底",
+	Callback = function()
+		iconIdx = iconIdx % #iconCycle + 1
+		Window:SetIcon(iconCycle[iconIdx])
+		Window:Notify{ Title = "窗口图标", Icon = iconCycle[iconIdx], Duration = 2, Content = iconCycle[iconIdx] }
+	end,
+}
+secIcons:Button{
+	Title = "Notify 五包图标轮播", Callback = function()
+		local packs = { "lucide:zap", "solar:home-2-bold", "sfsymbols:00CircleFill", "gravity:abbr-api", "geist:accessibility" }
+		for i, name in ipairs(packs) do
+			task.delay(i * 0.35, function()
+				Window:Notify{ Title = name, Content = "Lib.Icon 前缀路由 · 裸名亦可", Icon = name, Duration = 3 }
+			end)
+		end
+	end,
+}
+
+Window:Notify("秋容工具箱 v1.2.1", "按 RightShift 呼出 / 隐藏窗口；顶栏 ◐ 切换主题")
+print("[QiurongToolbox] 示例加载完成 v1.2.1；配置目录:", Lib.Folder)
