@@ -1,71 +1,11 @@
 --[[
-	代发货大亨 (Dropshipping Tycoon) · 订单驱动流水线 Hub  v3.2
-	UI: WindUI（主题 / 配置存取 / 窗口外观 / 弹窗 全部启用）
-	==================================================================
-	【订单驱动的状态机】
-	  流水线不跑固定步骤序列，而是：
-	    读当前进行中订单 -> 看它的 status -> 只做该 status 该做的那一件事
-	  New                -> AcceptOrder(id)                     [远程]
-	  Ready to Pack 空手  -> 取原始包裹                           [远程 / 提示点]
-	  Ready to Pack 手持  -> Put on conveyor                     [提示点]
-	  Being Packed 空手   -> 成品箱出现后 Pick up package          [提示点]
-	  Being Packed 手持   -> Leave for courier                   [提示点]
-	  Ready for Courier   -> 等快递员取件（约 17s 自动 Completed）
-	  任何一步失败/卡住都不会跑偏：下一 tick 重新读状态再决定。
-	==================================================================
-	【执行引擎（实机标定结论）】
-	  · AcceptOrder / BuySupply 是纯 RemoteEvent，与角色位置无关
-	  · WarehouseStockTake / Put on conveyor / 成品箱 Pick up package /
-	    Leave for courier 都由服务端做距离校验（12 stud），必须人到位
-	    -> 统一用"闪现微传送"：瞬间把角色挪到提示点 -> 等服务端收到
-	       新坐标 -> 触发 -> 停在那里等状态确认（最多 1.4s，没确认就原地补一枪）
-	       —— 真正会丢动作的是"触发完立刻回位"：服务端做距离校验读的是服务器端坐标，人已经闪回去，动作直接被丢。
-	==================================================================
-	【v2 -> v3.2 修复】
-	  1. 旧版取箱只扫 plot，箱子其实在 Workspace.LocalWarehouseStock
-	  2. 旧版无订单也硬跑 -> 严格订单驱动
-	  3. 提示点每帧全量扫 -> 只扫 [地块 + 仓库] 两棵小子树并节流
-	  4. 状态靠轮询 -> 靠 StateUpdate 推送，轮询只兜底
-	  5. 悬浮窗拖不动 -> 全局 UIS + 区域命中 + 位置存盘
-	  6. 看板空白 -> 启动先等状态就绪再建 UI
-	  7. 触发完立刻回位导致动作被丢 -> 改为「等到状态确认再回位」，未确认原地补一枪（v3.2）
-	  8. 自动接单被绑在流水线总开关里 -> 拆成独立线程，关掉流水线也能接单（v3.2）
-	  9. 旧存档里的坏时序 -> 载入时自动迁移到安全值（pipe.ver = 2）
-	  10. 流水线等确认会阻塞主循环 -> 流水线/接单/UI 拆成三条线程，HUD 不再卡
-	  11. 成品箱抢跑传送 -> 只认服务端置的 Enabled=true（箱子到带末才为真），已不再强行启用
-	  12. 状态跳到 Being Packed 但原包还在手上 -> 该分支改为重试上带，不再干等卡死
-	==================================================================
-	【v3.2 新增：自动购买 / 自动招聘 / 自动广告】（接口全部实机标定）
-	  1. 商品解锁  UnlockProduct(productId : string)，已拥有时是空操作
-	  2. 员工招聘  HireEmployee(offerId : number)   ← 必须 number，字符串无效
-	               免费拉取: RequestEmployees / RequestJobs（和花钱的重掷是两回事）
-	               重掷候选人: RefreshJobs()  花 5 宝石
-	               补候选位  : BuyCandidateSlot()  100 现金，offers 3 -> 4
-	               补员工工位: BuyWorkerSlot()  价格见 EmployeeState.workerSlotCost
-	  3. 广告投放  RecordAd() -> adState=Recording（adRecordTotal 秒）
-	               -> adState=Ready -> PublishAd() 才真正投放并生成 campaign
-	               费用 = CampaignState.campaignCosts[rarity][duration]
-	               选品 = SelectAdProduct(productId : string)
-	               数据拉取 = RequestCampaigns -> CampaignState（campaigns 里 left 是剩余秒）
-	==================================================================
-	【v3.2 新增：自动运营 / AI 调参 / 传送带感知】
-	  1. 自动运营
-	     自动领取  QuestClaim(uid:string) ✅ / DailyClaim() / QuestClaimBonus()
-	     自动休假  SendVacation(empId:number) ✅（status -> "On Vacation"）
-	     自动训练  StartTraining(empId:number)（需 training.mozliwy、现金 >= training.cena）
-	     自动研究  ResearchBuy(productId)（后期内容，当前被服务端门禁）
-	     自动合同  ContractAccept(idx)（需先建办公室）
-	  2. AI 调参：读实时信号自动写回配置（每类都可单独关）
-	     时序 <- Exe.stats 的动作确认失败率
-	     补货 <- warehouseCapacity / warehouse
-	     并发 <- maxFulfillments 与传送带条数
-	     预算 <- 当前现金 × 强度比例（保守 5% / 标准 10% / 激进 15%）
-	     广告 <- 600s / 300s 花费与现金
-	  3. 传送带：从 Plot.Conveyor.UpgradeAnchor 读条数与等级
-	     面板文本 Tytul="CONVEYOR N" / Poziom="LEVEL x/3" / Cena="$n"
-	     最多 3 条；升级点 Enabled=true 时可自动点 UPGRADE
-	==================================================================
-	快捷键: 右Shift 开关窗口（可在 外观 页改键）
+	代发货大亨 · 订单驱动流水线 Hub v3.2    作者: b站英吉利超入
+	UI: WindUI    快捷键: 右Shift 开关窗口
+	状态机: New -> AcceptOrder ｜ Ready to Pack -> 取原包 / 上带
+	        ｜ Being Packed -> 取成品箱 / 交快递员 ｜ Ready for Courier -> 等结算
+	纯远程(与位置无关): 接单 / 买货 / 解锁 / 广告 / 招聘 / 领取
+	需微传送到位(服务端校验 12 格): 取货 / 上带 / 取成品 / 交件 / 物理升级点
+	⚠ 触发后不能立刻回位，要停在原地等状态确认（服务端读的是服务器端坐标）
 --]]
 
 --=====================================================================
@@ -159,7 +99,6 @@ local DEFAULTS = {
 		tpHeight = 2.5,
 		-- ⚠ 实机标定（v3.2）：真正会丢动作的不是 preWait，而是"触发完立刻回位"。
 		--   服务端做距离校验时读的是服务器端坐标，人已经闪回去 -> 判定距离不足 -> 丢弃。
-		--   所以触发后改为「留在原地等状态确认（最多 ~1.4s），没确认就原地补一枪」。
 		preWait = 0.30,
 		postWait = 0.30,
 		gap = 0.30, autoRestock = true,
@@ -174,18 +113,15 @@ local DEFAULTS = {
 		low = 2, batch = 5, interval = 8, cashFloor = 60,
 	},
 	hud = { on = true, x = 16, y = 330 },
-	-- 自动购买商品（解锁产品线）
 	buyprod = {
 		on = false, maxPrice = 0, cashFloor = 200, interval = 6,
 		allow = {}, deny = {},
 	},
-	-- 自动购买员工（JobCenter 招聘）
 	hire = {
 		on = false, interval = 6, cashFloor = 300, maxPrice = 0,
 		minLevel = "无要求", roles = {}, denyRoles = {},
 		autoWorkerSlot = true, autoRefresh = false, gemFloor = 0,
 	},
-	-- 自动发送广告（录制 -> 发布）
 	ad = {
 		on = false, interval = 5, duration = 600,
 		productMode = "跟随广告位", product = "",
@@ -194,29 +130,24 @@ local DEFAULTS = {
 	},
 	-- 保护模式：现金低于阈值时自动停掉一切花钱模块（流水线照常跑）
 	guard = { on = true, cashFloor = 150 },
-	-- 调度联动：任务加速 / 合同驱动生产
 	sched = {
 		questBoost = true, contractBoost = true,
 		selfHeal = true, hourlyReport = true,
 	},
-	-- 维护：日志落盘 / 门禁接口复测
 	maint = {
 		logFile = false, logInterval = 30,
 		gateRecheck = true, recheckInterval = 600,
 	},
-	-- 传送带（后期可升级 / 增加，最多 3 条）
 	conv = {
 		auto = true, count = 1, level = 0, maxCount = 3,
 		autoUpgrade = false, upgradeFloor = 300,
 	},
-	-- AI 自动调参（结合现况动态改配置）
 	ai = {
 		on = false, interval = 10, style = "标准",
 		timing = true, restock = true, concurrency = true,
 		budget = true, adPace = true, conveyorAware = true,
 		preWaitMin = 0.18, preWaitMax = 0.60, note = "待机",
 	},
-	-- 自动运营：领取 / 休假 / 训练 / 研究 / 合同
 	ops = {
 		claim = false, claimInterval = 20,
 		vacation = false, vacThreshold = 60, vacInterval = 30,
@@ -261,8 +192,6 @@ local function cfgSave(force)
 	end)
 end
 
--- 配置迁移：旧存档里可能存着坏时序（preWait=0.06 / postWait=0.14），
--- 那正是"传送成功但动作不生效"的根因，这里统一抬到安全值。
 safe(function()
 	local v = tonumber(cfg.pipe.ver) or 0
 	if v < 2 then
@@ -325,17 +254,11 @@ local function countStatus(st)
 	return n
 end
 -- ⚠ 实机标定（v3.2 关键修复）：判断"还能不能接新单"必须看服务端的
---   activeFulfillments，而不是我们自己的状态表。
 --   原因：订单进入 Ready for Courier（包裹已交到快递员位）时，服务端就已经
---   把履约位释放了（实测 maxFulfillments=1 下，activeFulfillments 只剩新单，
---   老的 Ready for Courier 已不在其中），但我们的 FULFIL 仍把它算作占用，
---   于是 activeCount()=2 >= 1 -> 自动接单永久停摆。
 local function activeCount()
 	local af = S.activeFulfillments
 	if type(af) == "table" then
 		-- ⚠ 服务端给了这个字段就一律以它为准 —— 空表就是真的 0（槽位已释放）。
-		--   上一版写成 if n > 0 then return n end 是错的：空表会掉进下面的状态数兜底，
-		--   而 Ready for Courier 属于状态集合，于是算出 1 -> 永久拒绝接单。
 		local n = 0
 		for _ in pairs(af) do n = n + 1 end
 		return n
@@ -374,7 +297,6 @@ local function scanPrompts()
 			if d:IsA("ProximityPrompt") and d.Enabled and d.Parent and d.Parent:IsA("BasePart") then
 				Prompt.list[#Prompt.list + 1] = d
 				-- 可选：拉大交互距离并关掉视线校验。
-				-- 实测能让"放上传送带"在 89 stud 外直接生效。
 				if cfg.pipe.boost then
 					pcall(function()
 						if d.MaxActivationDistance < 200 then d.MaxActivationDistance = 200 end
@@ -424,7 +346,6 @@ local function guardRefresh()
 end
 local function guardBlock() return Guard.blocked end
 
--- 有些接口会被游戏静默拒绝（研究未开放 / 今日已领 / 无办公室 / 钱不够）。
 -- 没有退避就会每个周期都发一次无效远程并刷屏日志，这里做指数退避。
 local Backoff = {}
 local function backoffWait(key)
@@ -459,7 +380,6 @@ local function statHours()
 	return math.max(1 / 60, (os.clock() - Stat.startAt) / 3600)
 end
 
--- 前向声明：§5 的补货要用 Sched.prefProducts，完整定义在 §5.7
 local Sched
 
 --=====================================================================
@@ -515,7 +435,6 @@ local function fireNear(prompt, confirmFn)
 		safe(function() fireproximityprompt(prompt) end)
 		ok = holdUntil(confirmFn, HOLD_RETRY)
 	end
-	-- 给 AI 调参用的信号：只在有确认条件时统计（真实成功率）
 	if confirmFn then
 		Exe.stats.total = Exe.stats.total + 1
 		if not ok then Exe.stats.fail = Exe.stats.fail + 1 end
@@ -529,7 +448,6 @@ local function fireNear(prompt, confirmFn)
 end
 
 -- 返回 true = 已发出动作；false = 无提示点 / 节流中
--- confirmFn 省略 = 发出即算成功；给了就等到状态确认（最多 ~1.4s + 补射 ~0.9s）
 local function actPrompt(prompt, confirmFn)
 	if not prompt then return false end
 	if not canAct() then return false end
@@ -537,7 +455,6 @@ local function actPrompt(prompt, confirmFn)
 	return true, confirmed
 end
 
--- 取货总入口。
 -- 提示：WarehouseStockTake 远程服务端同样校验距离，远距离发无效，
 --       必须角色真的靠近箱子，所以走"传送到箱子旁 -> 触发 -> 回原位"。
 local function pickRaw()
@@ -577,7 +494,6 @@ local function stockOf(pid)
 end
 
 local function restockProduct()
-	-- 合同驱动：有高价值合同在手时，优先保证它的货
 	if Sched and Sched.prefProducts then
 		for pid in pairs(Sched.prefProducts) do
 			if stockOf(pid) <= 0 then return pid end
@@ -889,12 +805,8 @@ end
 
 -- ---------------------------------------------------------------- 自动广告
 -- 实机标定：RecordAd() 让 adState 变 Recording（adRecordTotal 秒），
---   录制结束变 Ready，此时 PublishAd() 才真正投放并生成 campaign。
---   费用取 CampaignState.campaignCosts[rarity][duration]。
 local Ad = { at = 0, last = "待机", published = 0, armed = false }
 
--- 爆款联动：ViralState 会轮换当期的爆款商品（位面 mnoznik 倍），
--- 优先投它 —— 但只挑自己已经解锁的，否则广告面板根本不认。
 local RARITY_RANK = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6 }
 
 local function viralProduct()
@@ -1045,13 +957,9 @@ end
 --=====================================================================
 -- 5.55 自动运营：领取 / 休假 / 训练 / 研究 / 合同
 --   实机标定：
---     SendVacation(empId:number)  -> status 变 "On Vacation"、vacationLeft=180  ✅
---     QuestClaim(uid:string)      -> 该任务 claimed=true                       ✅
 --     HireEmployee(offerId:number) / BuyCandidateSlot() / RefreshJobs(5宝石)   ✅
---     StartTraining(empId:number) -> 条件：training.mozliwy 且 trwa=false、
 --                                    zajete=false、现金 >= training.cena（750）
 --     ResearchBuy / DailyClaim / QuestClaimBonus / ContractAccept 的参数为自然
---       推断，当前被游戏门禁（研究未开放 / 今日已领 / 奖励未就绪 / 无办公室）。
 --       这里如实回报"服务端未接受"，不会假装成功。
 --=====================================================================
 local Ops = { at = {}, last = {}, log = {} }
@@ -1102,7 +1010,6 @@ local function opsClaimTick()
 				backoffReset("daily")
 				did[#did + 1] = "每日奖励"
 			end
-			-- 今天已领过也会落到 else：不是故障，30 分钟后自然再试一次
 		end
 	end
 	-- 回执确认：重新拉一次任务表，只有真的变成已领取才算数
@@ -1297,7 +1204,6 @@ Sched = {
 	noPlot = 0, note = "待机", gated = {},
 }
 
--- 从任务描述反推该做什么（QuestState.questy[].opis 是英文动作短语）
 function Sched.refreshQuest()
 	if os.clock() - Sched.questAt < 20 then return end
 	Sched.questAt = os.clock()
@@ -1321,7 +1227,6 @@ function Sched.refreshQuest()
 	Sched.note = (#f.texts > 0) and string.format("在追 %d 个未完成任务", #f.texts) or "无未完成任务"
 end
 
--- 合同驱动：把最值钱的合同所需产品设为优先（补货 + 接单排序都用它）
 function Sched.refreshContract()
 	Sched.prefProducts = {}
 	if not cfg.sched.contractBoost then return end
@@ -1356,7 +1261,6 @@ function Sched.heal()
 	end
 end
 
--- 每小时报表
 function Sched.report(force)
 	local now = os.clock()
 	if not force then
@@ -1370,7 +1274,6 @@ function Sched.report(force)
 	Notify("运行报表", msg, "activity")
 end
 
--- 门禁接口复测：被静态拒绝的接口定期放行一次，开了就立刻告知
 function Sched.recheckGates()
 	if not cfg.maint.gateRecheck then return end
 	local now = os.clock()
@@ -1387,7 +1290,6 @@ function Sched.recheckGates()
 	end
 end
 
--- 日志落盘
 function Sched.flushLog()
 	if not cfg.maint.logFile then return end
 	if not (writefile and appendfile) then return end
@@ -1403,7 +1305,6 @@ function Sched.flushLog()
 	end)
 end
 
--- 配置导出 / 导入（执行器剪贴板）
 function Sched.exportCfg()
 	if not setclipboard then return false, "当前执行器不支持 setclipboard" end
 	local ok, json = safe(function() return Http:JSONEncode(cfg) end)
@@ -1443,10 +1344,6 @@ local Conv = { at = 0, count = 1, level = 0, maxLevel = 3, price = nil,
 	prompt = nil, last = "—", belts = {}, avgLevel = 0, target = nil }
 
 -- 实机标定：传送带升级是地块里的物理提示点
---   Plot.Conveyor.UpgradeAnchor.UpgradePrompt  (ActionText="UPGRADE")
---   面板 UpgradePanel 文本：Tytul="CONVEYOR 1" / Poziom="LEVEL 0 / 3" /
---                           Efekt="Packages move 1.5x faster" / Cena="$100"
---   等级从 0 起、最高 3；后期会有 CONVEYOR 1/2/3（最多 3 条）。
 local function readConv(force)
 	if not force and os.clock() - Conv.at < 1.5 then return end
 	Conv.at = os.clock()
@@ -1492,7 +1389,6 @@ local function readConv(force)
 		end
 		Conv.level = maxLv
 		Conv.avgLevel = sumLv / #belts
-		-- 升级目标：优先"升级点已开放且等级最低"的带子；都没有开放的就取等级最低的
 		local target
 		for _, b in ipairs(belts) do
 			if b.enabled and b.level < b.maxLevel and (not target or b.level < target.level) then target = b end
@@ -1796,8 +1692,6 @@ local function setPhase(name, detail)
 	Pipe.detail = tostring(detail or name)
 end
 
--- 状态优先级：能动手的先干；Ready for Courier 只是在等快递员 NPC（约 17s），
--- 如果它一直占着 currentOrder()，新接的单会被饿死（并发放开后必然发生）。
 local ORDER_PRI = { ["Ready to Pack"] = 3, ["Being Packed"] = 2, ["Ready for Courier"] = 1 }
 
 local function currentOrder()
@@ -1840,7 +1734,6 @@ local function acCandidates()
 		if tostring(o.status) == "New" and acPass(o) then r[#r + 1] = o end
 	end
 	local pri = cfg.ac.priority
-	-- 合同驱动：正在推进的合同所需产品优先接单
 	local pref = (Sched and Sched.prefProducts) or {}
 	local function prefRank(o) return pref[tostring(o.product or "")] and 1 or 0 end
 	table.sort(r, function(a, b)
@@ -1884,9 +1777,7 @@ local function doneBoxPrompt()
 	local pkg = plot:FindFirstChild("Package", true)
 	if not pkg then return nil end
 	-- ⚠ 实机标定（v3.2）：成品箱会沿传送带移动，服务端只在箱子「到达末端」
-	--   那一刻才把 ProximityPrompt.Enabled 置 true（上带后约 4s）。
 	--   所以这里必须只认 Enabled=true —— 绝不能强行启用它，
-	--   否则箱子还在带子中间就传送过去，就是抢跑空触。
 	for _, d in ipairs(pkg:GetDescendants()) do
 		if d:IsA("ProximityPrompt") and d.Enabled
 			and (d.ActionText == "Pick up package" or d.ActionText == "") then
@@ -1909,10 +1800,7 @@ local function doneBoxCustomer()
 	return nil
 end
 
--- 订单完成的统计与日志。
 -- ⚠ 完成的订单会离开履约集合，currentOrder() 不再返回它，所以必须独立扫描，
---   否则 Pipe.completed 与"订单完成"日志永远是死代码。
---   seed=true 用于启动时把历史已完成订单先登记好，避免开局刷屏。
 local function trackCompletions(seed)
 	local n = 0
 	for _, o in pairs(S.orders or {}) do
@@ -1927,7 +1815,6 @@ local function trackCompletions(seed)
 		end
 	end
 	if seed or n == 0 then return end
-	-- 会话很长时清一次，避免 seen 无限增长
 	local cnt = 0
 	for _ in pairs(Pipe.seen) do cnt = cnt + 1 end
 	if cnt > 400 then
@@ -1938,7 +1825,6 @@ local function trackCompletions(seed)
 	end
 end
 
--- 把原始包裹交给传送带（Ready to Pack 与 Being Packed 共用）
 -- ⚠ 实机标定：状态偶尔会先跳到 Being Packed，但手里的原始包裹没收走，
 --   这时必须重试上带，否则会卡死在「手里还拿着原包」的假过渡态。
 -- 但也要限次：一旦服务端长时间不收（例如卡在 Being Packed 的结算窗口），
@@ -1981,7 +1867,6 @@ local function pipeTick()
 		return
 	end
 
-	-- 角色不在场（死亡 / 复活中）时不做任何传送与触发，等它回来
 	if not getHRP() then
 		setPhase("WAIT", "角色不在场（等待复活）")
 		return
@@ -2044,7 +1929,6 @@ local function pipeTick()
 			if p then
 				local who = doneBoxCustomer()
 				Pipe.detail = "取成品箱" .. (who and ("（" .. who .. "）") or "")
-				-- 确认条件：成品箱到手（打包完成后才会出现，所以这步要等状态自己推进）
 				actPrompt(p, function() return carrying() == "labeled" end)
 			else
 				Pipe.detail = "打包中…"
@@ -2065,7 +1949,6 @@ local function pipeTick()
 	end
 
 	-- 注：订单完成 = 状态离开履约集合，currentOrder() 已经不会再返回它，
-	-- 完成统计改由 trackCompletions() 独立扫描（原分支是死代码）。
 	setPhase("WAIT", "未知状态 " .. st)
 end
 
@@ -2074,8 +1957,6 @@ end
 --=====================================================================
 local function waitForState(timeout)
 	requestState()
-	-- 顺手把招聘 / 广告 / 领取 / 合同 / 研究面板也拉一次，
-	-- 这样 UI 建页签时就有岗位列表、广告价、任务与员工数据
 	requestJobs()
 	requestEmployees()
 	requestCampaigns()
@@ -2092,7 +1973,6 @@ local function waitForState(timeout)
 end
 local stateReady = waitForState(8)
 log(stateReady and "状态已就绪" or "状态等待超时（继续运行）")
--- 启动时先把历史已完成订单登记掉，否则完成计数/日志会开局刷屏
 safe(function() trackCompletions(true) end)
 
 --=====================================================================
@@ -2115,11 +1995,9 @@ local ConfigMgr = { name = nil, list = {}, lastMsg = "—" }
 if WindUI then
 	-- ⚠ 界面构建必须放进独立函数：整个 UI 有 60+ 个局部变量，直接摊在主 chunk
 	--   里会撞 Luau「单函数 200 个局部寄存器」上限，导致整个脚本编译失败。
-	--   包一层函数后，UI 的局部变量有自己的寄存器帧，互不挤占。
 	local function buildUI()
 	safe(function() WindUI:SetNotificationLower(true) end)
 
-	-- 外观设置先应用（建窗口时就要用）
 	local vw = cfg.view
 	Window = WindUI:CreateWindow({
 		Title       = "大不列颠超入脚本-代发货大亨",
@@ -2136,8 +2014,6 @@ if WindUI then
 		HideSearchBar = false,
 		ScrollBarEnabled = true,
 		-- ⚠ Acrylic 必须建窗口时就传 true：WindUI 只在创建时生成 AcrylicPaint，
-		--   而 WindUI:ToggleAcrylic 内部要求 Window.AcrylicPaint 存在，否则整段空转。
-		--   所以这里固定 true 先把对象建出来，紧接着按存档状态真正关掉。
 		Acrylic     = true,
 		BackgroundImageTransparency = 0.35,
 		ToggleKey   = Enum.KeyCode.RightShift,
@@ -2145,7 +2021,6 @@ if WindUI then
 	})
 	-- 背景透明：⚠ WindUI 这版的 Window:SetBackgroundTransparency(A, B) 读的是**第二个**参数，
 	--   而且它内部调用两参数的 ToggleTransparency 时只传了一个 -> F=nil -> 落到 0 -> 等于没效果。
-	--   这里按库的真实语义自己走：先写 TransparencyValue，再用 (state, state) 调 ToggleTransparency。
 	local function applyTransparency(v)
 		v = math.clamp(tonumber(v) or 0, 0, 1)
 		safe(function() WindUI.TransparencyValue = v end)
@@ -2157,13 +2032,11 @@ if WindUI then
 		end)
 	end
 	UI.applyTransparency = applyTransparency
-	-- 透明度以「背景透明度」滑块的值为准，总开关跟随它同步，避免两个控件打架
 	applyTransparency(vw.bgTransparency)
 	cfg.view.transparency = (tonumber(vw.bgTransparency) or 0) > 0
 	safe(function() Window:SetPanelBackground(vw.panelBg) end)
 	safe(function() Window:SetUIScale(vw.uiScale) end)
 	if vw.bgImage ~= "" then safe(function() Window:SetBackgroundImage(vw.bgImage) end) end
-	-- 按存档状态真正应用亚克力（对象已在上面建好）
 	safe(function() WindUI:ToggleAcrylic(vw.acrylic) end)
 
 	Notify = function(t, c, i)
@@ -2194,7 +2067,6 @@ if WindUI then
 	end
 	UI.para = para
 
-	-- 安全建元素：不支持就跳过，绝不让整窗崩掉
 	-- ⚠ 实机标定：WindUI 的图标表随版本变动，Toggle 遇到解析不到的图标名
 	--   会直接抛 "attempt to index nil with number" 整块不建（Button 不校验）。
 	--   所以失败时丢掉 Icon 重试一次，保证元素一定出现。
@@ -2247,6 +2119,19 @@ if WindUI then
 	para(SecAbout, "版本", "正式版 1.0.0", "tag")
 	para(SecAbout, "适配游戏", "代发货大亨（Dropshipping Tycoon）", "play")
 	para(SecAbout, "说明", "本页只做功能说明与使用指引，不含任何源码。", "info")
+	mk("Button", SecAbout, {
+		Title = "QQ群（点击复制）", Desc = "群号 1105244454 · 点一下直接复制到剪贴板",
+		Icon = "clipboard-copy",
+		Callback = function()
+			if not setclipboard then
+				Notify("QQ群", "群号 1105244454（当前执行器不支持剪贴板）", "clipboard-copy")
+				return
+			end
+			local ok = safe(function() setclipboard("1105244454") end)
+			Notify("QQ群", ok and "群号 1105244454 已复制" or "复制失败，请手动记下 1105244454",
+				ok and "clipboard-copy" or "triangle-alert")
+		end,
+	})
 
 	local SecPrinciple = TabInfo:Section({ Title = "核心原理（为什么稳）", Icon = "zap", Opened = false })
 	para(SecPrinciple, "订单驱动而非固定循环",
@@ -3069,8 +2954,6 @@ if WindUI then
 	})
 	mk("Button", SecLookAct, {
 		Title = "切换亚克力", Icon = "sparkles",
-		-- 原来调的是 WindUI:ToggleAcrylic()（无参）—— 无参时内部 aA=nil，
-		-- 只会把亚克力关掉，并不是真的"切换"。这里改成翻转配置再按状态应用。
 		Callback = function()
 			cfg.view.acrylic = not cfg.view.acrylic
 			cfgTouch()
@@ -3176,7 +3059,6 @@ if WindUI then
 	local defaultName = ConfigMgr.list[1] or "default"
 	useConfig(defaultName)
 
-	-- WindUI 的 Input 元素没有 :Get()，自己记最后输入值
 	local nameBuf = ConfigMgr.name or "default"
 	local cfgInput = mk("Input", SecCfg, {
 		Title = "配置名称", Desc = "新建/切换用，回车确认", Icon = "tag",
@@ -3378,7 +3260,6 @@ if WindUI then
 	safe(function() UI.setText(UI.pTheme, tostring(WindUI:GetCurrentTheme())) end)
 	log("WindUI 界面已建立 · 主题 " .. tostring(cfg.view.theme) .. " · 产品 " .. #prodVals .. " 种")
 	end
-	-- 界面构建失败也不影响自动化：悬浮看板与三条线程照常跑
 	local okUI, errUI = pcall(buildUI)
 	if not okUI then log("界面构建异常: " .. tostring(errUI)) end
 end
@@ -3394,7 +3275,6 @@ task.spawn(function()
 	end
 end)
 
--- 线程 B：自动接单（独立于流水线开关，关掉流水线也能接单）
 task.spawn(function()
 	local tAc = 0
 	while ENABLED and STATE.alive() do
@@ -3409,7 +3289,6 @@ task.spawn(function()
 	end
 end)
 
--- 线程 D：自动购买（商品解锁 / 员工招聘 / 广告投放 / 传送带 / AI 调参）
 task.spawn(function()
 	local tB, tH, tConv, tViral = 0, 0, 0, 0
 	while ENABLED and STATE.alive() do
@@ -3420,7 +3299,6 @@ task.spawn(function()
 		safe(guardRefresh)
 		safe(statTick)
 
-		-- 爆款轮换是慢变量，60s 拉一次足够
 		if now - tViral >= 60 then
 			tViral = now
 			requestViral()
@@ -3451,7 +3329,6 @@ task.spawn(function()
 
 		safe(opsTick)
 
-		-- 传送带：只是读状态很便宜；升级尝试 15s 一次，避免刷屏
 		safe(readConv)
 		if cfg.conv.autoUpgrade and now - tConv >= 15 then
 			tConv = now
@@ -3465,7 +3342,6 @@ task.spawn(function()
 	end
 end)
 
--- 线程 C：补货 / 完成统计 / 状态兜底 / UI
 task.spawn(function()
 	local tRest, tUI, tState, tDone = 0, 0, 0, 0
 	while ENABLED and STATE.alive() do
@@ -3478,13 +3354,11 @@ task.spawn(function()
 			Rst.last = tostring(msg or "—")
 		end
 
-		-- 状态兜底轮询（推送为主，这里只是保险）
 		if now - tState >= 5 then
 			tState = now
 			requestState()
 		end
 
-		-- 完成统计（1s 一次即可）
 		if now - tDone >= 1 then
 			tDone = now
 			safe(trackCompletions)
@@ -3557,7 +3431,6 @@ task.spawn(function()
 				end
 				t(UI.pConvLog, Conv.last or "—")
 
-				-- 会话统计 / 收益效率 / 动作确认率 / 当期爆款
 				local mins = math.floor((os.clock() - Stat.startAt) / 60)
 				t(UI.dStat, string.format("会话 %d 分 ｜ 完成 %d 单 ｜ 现金 %s ｜ 宝石 %s ｜ %s",
 					mins, Pipe.completed, fmt(S.cash), fmt(S.gems),
@@ -3581,7 +3454,6 @@ task.spawn(function()
 						or "无数据（需打开一次爆款面板）")
 				end
 
-				-- 调度联动：任务进度 / 合同目标 / 在飞订单 / 门禁状态
 				do
 					local f = Sched.focus
 					t(UI.dQuest, (#f.texts > 0) and table.concat(f.texts, "\n") or "无未完成任务")
@@ -3616,8 +3488,6 @@ task.spawn(function()
 						tostring(ConfigMgr.name), ConfigMgr.lastMsg, #ConfigMgr.list))
 				end
 
-				-- 亚克力状态守夜：WindUI 在每次开窗时会自己 ToggleAcrylic(true)，
-				-- 若不纠正，"关掉亚克力"下次开窗就失效。这里按配置把它压回去。
 				if Window and WindUI and Window.AcrylicPaint then
 					local want = cfg.view.acrylic and true or false
 					if Window.Acrylic ~= want then
