@@ -3485,7 +3485,7 @@ function SectionMethods:ColorPicker(o) return ctlColorpicker(self, o or {}) end
 -- ===== 窗口壳 =====
 local function buildPattern(lib, shell, t, M)
 	-- 背景跟随主题纯色（按用户要求移除装饰纹理）
-	return nil
+	do return nil end
 	local layer = New("Frame", {
 		BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
 		ZIndex = 0, ClipsDescendants = true, Parent = shell,
