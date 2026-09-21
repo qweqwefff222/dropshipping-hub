@@ -14180,7 +14180,7 @@ ImageRectPosition=Vector2.new(672,864),
 ImageRectSize=Vector2.new(96,96),
 Image=10,
 },
-},
+}},
 	geist = {
 Spritesheets={
 ["1"]="rbxassetid://133454478968909",
@@ -16545,7 +16545,7 @@ Image=8,
 ImageRectPosition=Vector2.new(0,256),
 ImageRectSize=Vector2.new(128,128),
 },
-},
+}},
 }
 
 local SIMPLE_PACKS = {
