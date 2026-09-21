@@ -10587,7 +10587,9 @@ local function ctlParagraph(sec, o)
 			lib:Bind(sk, "TextColor3", "muted")
 		end
 	end
+	local descBaseY = y -- 描述区起始基准（标题行之后）
 	local function rebuildDesc(items)
+		y = descBaseY -- SetDesc 重建时从基准重算，避免闭包 y 残留上次终值导致错位/高度虚增
 		for _, l in ipairs(descLabels) do l:Destroy() end
 		descLabels = {}
 		local list = type(items) == "table" and items or (items and { tostring(items) } or {})
