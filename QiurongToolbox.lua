@@ -2057,14 +2057,15 @@ local function refreshCats(lib, ctx)
 			local idx = ctx.catPage * CAT_SLOTS + i
 			local tabObj = tabs[idx]
 			btn.Visible = tabObj ~= nil
-			if tabObj then
-				local cur = ctx.win._current == tabObj
-				btn.Text = tostring(tabObj.title)
-				btn.BackgroundColor3 = cur and lib:Theme().accent or lib:Theme().panel2
-				e.st.Color = cur and lib:Theme().accent or lib:Theme().line
-				e.lbl.TextColor3 = cur and lib:Theme().bg or lib:Theme().text
-				e.lbl.Font = cur and Enum.Font.GothamBold or Enum.Font.GothamMedium
-			end
+		if tabObj then
+			local cur = ctx.win._current == tabObj
+			-- 文字一律用 lbl 显示（TextButton 自身 TextColor3 是默认黑色，深色主题上不可见）
+			e.lbl.Text = tostring(tabObj.title)
+			e.lbl.TextColor3 = cur and lib:Theme().bg or lib:Theme().text
+			e.lbl.Font = cur and Enum.Font.GothamBold or Enum.Font.GothamMedium
+			btn.BackgroundColor3 = cur and lib:Theme().accent or lib:Theme().panel2
+			e.st.Color = cur and lib:Theme().accent or lib:Theme().line
+		end
 		end
 	end
 	ctx.prevBtn.TextTransparency = ctx.catPage > 0 and 0 or 0.55
@@ -2105,12 +2106,12 @@ local function buildBottom(lib, ctx, cfg)
 	lib:Bind(nextBtn, "TextColor3", "accent2")
 	local catBtns = {}
 	local catsX1 = M.mobile and 10 + arrowW + 8 or 18 + arrowW + 12
-	local catsX2 = M.mobile and -(10 + arrowW + 8) or -(18 + arrowW + 12)
+	-- 分类区位于 ‹ 与 › 之间：区宽 = 窗宽 - 两侧让位；纯 offset 定位（SetSize 后不重排，与底纹同为已知限制）
+	local slotW = (M.win.w - catsX1 * 2) / CAT_SLOTS
 	for i = 1, CAT_SLOTS do
-		local w = UDim2.new(1 / CAT_SLOTS, (catsX2 - catsX1) / CAT_SLOTS - 6, 0, byH)
 		local btn = New("TextButton", {
-			Position = UDim2.new(0, catsX1 + (i - 1) * ((catsX2 - catsX1) / CAT_SLOTS) + 3, 0, (M.bottom - byH) / 2),
-			Size = UDim2.new(1 / CAT_SLOTS, (catsX2 - catsX1) / CAT_SLOTS - 6, 0, byH),
+			Position = UDim2.fromOffset(catsX1 + (i - 1) * slotW + 3, (M.bottom - byH) / 2),
+			Size = UDim2.fromOffset(slotW - 6, byH),
 			BackgroundColor3 = t.panel2, Font = Enum.Font.GothamMedium,
 			TextSize = M.mobile and 12 or 15, Text = "", Parent = bar,
 		})
@@ -2534,8 +2535,10 @@ function Lib.CreateWindow(a, b)
 			local textW = m.TextBounds.X
 			local visW = math.max(m.AbsoluteSize.X, 1)
 			marqueeOff += dt * 55
-			if marqueeOff > textW + visW + 80 then marqueeOff = 0 end
-			m.Position = UDim2.new(0, baseX - marqueeOff, 0.5, 0)
+			local total = textW + visW + 80
+			if marqueeOff > total then marqueeOff = 0 end
+			-- 经典跑马灯：从右侧进入、向左滚出（起点在可视区右缘外，避免"长期滚在外面看不见"）
+			m.Position = UDim2.new(0, baseX + visW - marqueeOff, 0.5, 0)
 		end
 	end))
 
