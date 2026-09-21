@@ -2052,18 +2052,19 @@ local function refreshCats(lib, ctx)
 	if ctx.catPage < 0 then ctx.catPage = 0 end
 	for i = 1, CAT_SLOTS do
 		local e = ctx.catBtns[i]
-		if not e then continue end
-		local btn = e.b
-		local idx = ctx.catPage * CAT_SLOTS + i
-		local tabObj = tabs[idx]
-		btn.Visible = tabObj ~= nil
-		if tabObj then
-			local cur = ctx.win._current == tabObj
-			btn.Text = tostring(tabObj.title)
-			btn.BackgroundColor3 = cur and lib:Theme().accent or lib:Theme().panel2
-			e.st.Color = cur and lib:Theme().accent or lib:Theme().line
-			e.lbl.TextColor3 = cur and lib:Theme().bg or lib:Theme().text
-			e.lbl.Font = cur and Enum.Font.GothamBold or Enum.Font.GothamMedium
+		if e then
+			local btn = e.b
+			local idx = ctx.catPage * CAT_SLOTS + i
+			local tabObj = tabs[idx]
+			btn.Visible = tabObj ~= nil
+			if tabObj then
+				local cur = ctx.win._current == tabObj
+				btn.Text = tostring(tabObj.title)
+				btn.BackgroundColor3 = cur and lib:Theme().accent or lib:Theme().panel2
+				e.st.Color = cur and lib:Theme().accent or lib:Theme().line
+				e.lbl.TextColor3 = cur and lib:Theme().bg or lib:Theme().text
+				e.lbl.Font = cur and Enum.Font.GothamBold or Enum.Font.GothamMedium
+			end
 		end
 	end
 	ctx.prevBtn.TextTransparency = ctx.catPage > 0 and 0 or 0.55
