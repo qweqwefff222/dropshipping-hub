@@ -2083,6 +2083,7 @@ local ChatPollThread = nil
             Warning = Color3.fromRGB(226, 176, 74),
             Danger = Color3.fromRGB(235, 92, 92),
             ToggleOff = Color3.fromRGB(52, 52, 52),
+            ControlDim = Color3.fromRGB(40, 40, 40),
             Overlay = Color3.fromRGB(0, 0, 0),
             Transparent = Color3.fromRGB(255, 255, 255),
         },
@@ -2147,6 +2148,7 @@ local ChatPollThread = nil
         PageConnections = {},
         LogConnections = {},
         _trackedConnections = setmetatable({}, { __mode = "k" }),
+        StatusWatchers = {},
     }
 
     local Components = {}
@@ -3420,6 +3422,7 @@ local ChatPollThread = nil
 
         local value = State:Get("dropdown", item.key, item.default or optionValue(options[1]) or "")
         local openToken = 0
+        local isOpen = false
         local optionButtons = {}
 
         local function findLabel(nextValue)
@@ -3436,6 +3439,7 @@ local ChatPollThread = nil
         local function setOpen(open)
             openToken += 1
             local token = openToken
+            isOpen = open
             local itemH = 34; local gap = 8; local count = #options
             local contentH = count * itemH + (count > 0 and (count - 1) * gap or 0) + 16
             local height = contentH
@@ -3531,7 +3535,7 @@ local ChatPollThread = nil
         end
 
         display.MouseButton1Click:Connect(function()
-            setOpen(not optionsFrame.Visible)
+            setOpen(not isOpen)
         end)
 
         function item.SetOptions(_, newOptions)
@@ -4236,6 +4240,7 @@ local ChatPollThread = nil
         end
 
         local openToken = 0
+        local isOpen = false
         local optionRows = {}
 
         local function paintOptions()
@@ -4326,6 +4331,7 @@ local ChatPollThread = nil
         local function setOpen(open)
             openToken += 1
             local token = openToken
+            isOpen = open
             arrow.Text = open and "^" or "v"
             if open then
                 popup.Visible = true
@@ -4360,8 +4366,8 @@ local ChatPollThread = nil
         end
 
         display.MouseButton1Click:Connect(function()
-            if not popup.Visible then rebuildOptions() end
-            setOpen(not popup.Visible)
+            if not isOpen then rebuildOptions() end
+            setOpen(not isOpen)
         end)
 
         State:RegisterControl(item.key, {
@@ -4412,6 +4418,13 @@ local ChatPollThread = nil
         local waiting = false
         local normalStroke = button:FindFirstChildOfClass("UIStroke")
         button.MouseButton1Click:Connect(function()
+            if waiting then  -- ⚠ #9 再点一次 = 取消等待
+                waiting = false
+                button.Text = tostring(value)
+                Tween(button, { BackgroundColor3 = Theme.Colors.PanelDeep, TextColor3 = Theme.Colors.TextMuted }, Theme.Animation.Fast)
+                State:AddLog("UI", "已取消键位绑定: " .. (item.title or item.key), item.key)
+                return
+            end
             waiting = true
             button.Text = "按下按键..."
             Tween(button, { BackgroundColor3 = Theme.Colors.AccentDim, TextColor3 = Theme.Colors.Text }, Theme.Animation.Fast)
@@ -4426,6 +4439,13 @@ local ChatPollThread = nil
                 return
             end
             if input.UserInputType ~= Enum.UserInputType.Keyboard then
+                return
+            end
+            if input.KeyCode == Enum.KeyCode.Escape then  -- ⚠ #9 Esc 取消
+                waiting = false
+                button.Text = tostring(value)
+                Tween(button, { BackgroundColor3 = Theme.Colors.PanelDeep, TextColor3 = Theme.Colors.TextMuted }, Theme.Animation.Fast)
+                State:AddLog("UI", "已取消键位绑定: " .. (item.title or item.key), item.key)
                 return
             end
             waiting = false
@@ -4477,6 +4497,26 @@ local ChatPollThread = nil
             Parent = bar,
         })
         AddCorner(fill, Theme.Radius.Pill)
+
+        -- ⚠ #8d 原实现从未 RegisterControl：进度条渲染后无法更新。补上。
+        local function applyProgress(nextValue)
+            value = math.clamp(tonumber(nextValue) or 0, 0, 1)
+            valueLabel.Text = string.format("%d%%", value * 100)
+            Tween(fill, { Size = UDim2.new(value, 0, 1, 0) }, Theme.Animation.Fast)
+        end
+        if UI.StatusWatchers ~= nil and type(item.value) == "function" then
+            table.insert(UI.StatusWatchers, {
+                Key = item.key,
+                Poll = item.value,
+                LastText = valueLabel.Text,
+                Apply = function(v) pcall(applyProgress, tonumber(v)) end,
+            })
+        end
+        State:RegisterControl(item.key, {
+            Type = "progress",
+            SetValue = function(_, nextValue) applyProgress(nextValue) end,
+            GetValue = function() return value end,
+        })
 
         return row
     end
@@ -4620,6 +4660,18 @@ local ChatPollThread = nil
         badge.TextXAlignment = Enum.TextXAlignment.Center
         AddCorner(badge, Theme.Radius.Control)
         AddStroke(badge, Theme.Colors.AccentSoft)
+
+        -- ⚠ #8 实时刷新：value 为函数时注册观察者，由心跳循环周期性求值
+        if UI.StatusWatchers ~= nil and type(item.value) == "function" then
+            table.insert(UI.StatusWatchers, {
+                Key = item.key,
+                Poll = item.value,
+                LastText = badge.Text,
+                Apply = function(v)
+                    if badge and badge.Parent then badge.Text = tostring(v) end
+                end,
+            })
+        end
 
         State:RegisterControl(item.key, {
             Type = "status",
@@ -6142,9 +6194,12 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
 
         UI.ClearPageConnections()
         UI.ClearLogConnections()
+        Components.__sliderLock = nil      -- 复位滑块拖拽锁（页面连接已断，InputEnded 不会再来了）
+        Components.__quickSliderLock = nil -- 同上（快捷面板滑块锁）
         UI.HideTooltip()
         UI.LogList = nil
         State:ClearVisibleControls()
+        UI.StatusWatchers = {}
 
         local C = UI.Content
         -- === 清除旧内容（无动画） ===
@@ -7107,7 +7162,8 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
 
         local closeButton = Components.IconButton(topRight, "window.close", "X", "关闭窗口", function()
             UI.Confirm("确认退出", "确定要关闭此脚本吗？关闭之后需要重新执行脚本才能打开哦。", function()
-                State:AddLog("UI", "关闭窗口", "window.close")
+                if AppConfig.OnClose then pcall(AppConfig.OnClose) end  -- ⚠ #11 库化钩子
+            State:AddLog("UI", "关闭窗口", "window.close")
                 -- 触发所有模块的全局停止回调（ESP/HUD/防护/核清理）
                 for _, _fn in ipairs(_G._BFH_STOP_ALL) do pcall(_fn) end
                 _G._BFH_STOP_ALL = {}
@@ -7215,6 +7271,29 @@ function Registry.GetAll() return {} end   -- 原脚本里是死代码，这里�
         UI.Track(root:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
             UI.ScheduleApplyWindowBounds()
         end))
+
+        -- ⚠ #8e 框架增强：status/progress 实时心跳（仅窗口可见时轮询，观察者只属当前页）
+        UI._statusLoopToken = (UI._statusLoopToken or 0) + 1
+        local _statusToken = UI._statusLoopToken
+        task.spawn(function()
+            while UI.RootGui and _statusToken == UI._statusLoopToken do
+                task.wait(0.4)
+                if UI.Main and UI.Main.Visible and UI.StatusWatchers then
+                    for _, watcher in ipairs(UI.StatusWatchers) do
+                        if type(watcher.Poll) == "function" then
+                            local okPoll, pollValue = pcall(watcher.Poll)
+                            if okPoll and pollValue ~= nil then
+                                pollValue = tostring(pollValue)
+                                if watcher.LastText ~= pollValue then
+                                    watcher.LastText = pollValue
+                                    pcall(watcher.Apply, pollValue)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
 
         UI.SetPage(AppConfig.DefaultPage)
         task.defer(function()
