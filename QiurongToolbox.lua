@@ -1775,17 +1775,17 @@ local function buildTopBar(lib, ctx, cfg)
 	lib:Bind(markText, "TextColor3", "bg")
 	local title = New("TextLabel", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(M.mobile and 52 or 78, M.mobile and 8 or 16),
-		Size = UDim2.new(1, -(M.mobile and 60 or 90), 0, M.mobile and 22 or 34),
-		Font = Enum.Font.GothamBold, TextSize = M.mobile and 17 or 24,
+		Position = UDim2.fromOffset(M.mobile and 52 or 78, M.mobile and 6 or 6),
+		Size = UDim2.new(1, -(M.mobile and 60 or 90), 0, M.mobile and 20 or 26),
+		Font = Enum.Font.GothamBold, TextSize = M.mobile and 15 or 22,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Text = tostring(cfg.Title or cfg.Name or "秋容工具箱"), Parent = logo,
 	})
 	lib:Bind(title, "TextColor3", "text")
 	local subtitle = New("TextLabel", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(M.mobile and 52 or 78, M.mobile and 30 or 52),
-		Size = UDim2.new(1, -(M.mobile and 60 or 90), 0, 14),
+		Position = UDim2.fromOffset(M.mobile and 52 or 78, M.mobile and 27 or 33),
+		Size = UDim2.new(1, -(M.mobile and 60 or 90), 0, M.mobile and 12 or 14),
 		Font = Enum.Font.GothamBold, TextSize = M.mobile and 9 or 11,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Text = string.upper(tostring(cfg.Subtitle or "QIURONG / ROBLOX UI")), Parent = logo,
@@ -1983,7 +1983,7 @@ local function buildMain(lib, ctx)
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.new(1, -(M.mobile and 14 or 24), 0, M.mobile and 12 or 22),
 		Size = UDim2.fromOffset(M.mobile and 64 or 110, M.mobile and 26 or 36),
-		BackgroundColor3 = t.good, BackgroundTransparency = 0.82, Parent = main,
+		BackgroundColor3 = t.good, BackgroundTransparency = 0.82, Visible = false, Parent = main,
 	})
 	Corner(badgePill, 8)
 	Stroke(badgePill, "good", 1, 0.15, lib)
@@ -2051,16 +2051,19 @@ local function refreshCats(lib, ctx)
 	if ctx.catPage >= totalPages then ctx.catPage = totalPages - 1 end
 	if ctx.catPage < 0 then ctx.catPage = 0 end
 	for i = 1, CAT_SLOTS do
-		local btn = ctx.catBtns[i]
+		local e = ctx.catBtns[i]
+		if not e then continue end
+		local btn = e.b
 		local idx = ctx.catPage * CAT_SLOTS + i
 		local tabObj = tabs[idx]
 		btn.Visible = tabObj ~= nil
 		if tabObj then
+			local cur = ctx.win._current == tabObj
 			btn.Text = tostring(tabObj.title)
-			btn.BackgroundColor3 = (ctx.win._current == tabObj) and lib:Theme().accent or lib:Theme().panel2
-			btn._stroke.Color = (ctx.win._current == tabObj) and lib:Theme().accent or lib:Theme().line
-			btn._lbl.TextColor3 = (ctx.win._current == tabObj) and lib:Theme().bg or lib:Theme().text
-			btn._lbl.Font = (ctx.win._current == tabObj) and Enum.Font.GothamBold or Enum.Font.GothamMedium
+			btn.BackgroundColor3 = cur and lib:Theme().accent or lib:Theme().panel2
+			e.st.Color = cur and lib:Theme().accent or lib:Theme().line
+			e.lbl.TextColor3 = cur and lib:Theme().bg or lib:Theme().text
+			e.lbl.Font = cur and Enum.Font.GothamBold or Enum.Font.GothamMedium
 		end
 	end
 	ctx.prevBtn.TextTransparency = ctx.catPage > 0 and 0 or 0.55
@@ -2119,14 +2122,14 @@ local function buildBottom(lib, ctx, cfg)
 			Text = "", Parent = btn,
 		})
 		lib:Bind(lbl, "TextColor3", "text")
-		btn._stroke = st
-		btn._lbl = lbl
+		-- ⚠ 绝不给 Instance 挂自定义字段（_stroke/_lbl 这种）：跨脚本环境读取会报
+		-- "not a valid member" 且直接炸掉 Tab 创建 → 界面全空。引用统一存进普通 Lua 表。
 		btn.MouseButton1Click:Connect(function()
 			local idx = ctx.catPage * CAT_SLOTS + i
 			local tabObj = ctx.win._tabOrder[idx]
 			if tabObj then ctx.win:SelectTab(tabObj) end
 		end)
-		catBtns[i] = btn
+		catBtns[i] = { b = btn, st = st, lbl = lbl }
 	end
 	ctx.catBtns = catBtns
 	ctx.prevBtn = prevBtn
