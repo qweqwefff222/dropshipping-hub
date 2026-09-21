@@ -2700,11 +2700,19 @@ function WinMT:SelectTab(idOrObj)
 	if not target or self._current == target then return end
 	local old = self._current
 	if old then
-		if old._frame then old._frame.Parent = nil end
+		if old._frame then
+			old._frame.Visible = false
+			old._frame.Parent = nil
+		end
 		applyMenuStyle(lib, old, false)
 	end
 	self._current = target
-	if target._frame then target._frame.Parent = ctx.bodyScroll end
+	if target._frame then
+		-- ⚠ 页帧创建时 Visible=false（防 UIListLayout 占位），挂回时必须显式恢复，
+		-- 否则内容全部存在但不可见（实测踩坑：只挂 Parent 内容区全空）
+		target._frame.Visible = true
+		target._frame.Parent = ctx.bodyScroll
+	end
 	applyMenuStyle(lib, target, true)
 	applyHeader(lib, ctx, target)
 	refreshCats(lib, ctx)
