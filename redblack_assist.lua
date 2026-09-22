@@ -1,7 +1,11 @@
 --[[
-	红黑据点战辅助 v1.4  ·  WindUI
+	红黑据点战辅助 v1.5  ·  WindUI
 	================================
 	游戏：两队（Red/Black）A/B/C 据点占领射击战
+	v1.5 变更：修 Aimbot 相机锁"锁的不是头"——
+	aimStep 从 RenderStepped 挪到 BindToRenderStep(Camera+1)，
+	RenderStepped 时写入的 cam.CFrame 会被默认相机脚本覆盖，
+	实测渲染帧与头平均偏差 1.79°；改后锁定在渲染前最后写入生效
 	v1.4 变更：
 	1. 修拖窗口粘鼠标：watchdog 不再在拖动中途清 WindUI.CurrentInput
 	   （鼠标按住期间不干预，只在松开后兜底恢复）
@@ -38,6 +42,7 @@ do
 	pcall(function() if g._RBA_LOOP then g._RBA_LOOP:Disconnect() end end)
 	pcall(function() if g._RBA_FOV then g._RBA_FOV:Remove() end end)
 	pcall(function() if g._RBA_WIN then g._RBA_WIN:Destroy() end end)
+	pcall(function() RunService:UnbindFromRenderStep("RBA_AIM") end)
 	g._RBA_LOOP, g._RBA_FOV, g._RBA_WIN = nil, nil, nil
 	pcall(function()
 		local cs = Workspace:FindFirstChild("CharactersSpawned")
@@ -621,12 +626,19 @@ end)
 -- ================= 主循环 =================
 local loopConn = RunService.RenderStepped:Connect(function(dt)
 	fovStep()
-	aimStep()
 	triggerStep()
 	espStep(dt)
 	moveStep()
 end)
 getgenv()._RBA_LOOP = loopConn
+-- ⚠ v1.5 关键修复：Aimbot 相机锁改用 BindToRenderStep(Camera+1)。
+-- RenderStepped 事件在默认相机脚本（BindToRenderStep Camera=200）之前触发，
+-- aimStep 里写的 cam.CFrame 会被相机脚本覆盖 → 渲染帧没有对准头
+-- （探针实测 104 采样平均偏差 1.79°，峰值 7.57° → "锁的不是头"）。
+-- Camera.Value+1 = 在相机更新之后、渲染之前最后写 CFrame，锁定才真正生效。
+RunService:BindToRenderStep("RBA_AIM", Enum.RenderPriority.Camera.Value + 1, function()
+	pcall(aimStep)
+end)
 
 -- 玩家离开/重生清理
 Players.PlayerRemoving:Connect(function(p)
@@ -827,7 +839,7 @@ end)
 
 Window:SelectTab(1)
 notify("红黑据点战辅助", "已加载 v1.2 · RightShift 呼出/隐藏", "crosshair", 4)
-print("[红黑辅助] v1.4 加载完成")
+print("[红黑辅助] v1.5 加载完成")
 
 -- 修复 WindUI 内容区滚动（Active=false + 无滚动条导致滚不动）
 task.defer(function()
