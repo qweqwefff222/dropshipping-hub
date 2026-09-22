@@ -1,7 +1,11 @@
 --[[
-	红黑据点战辅助 v1.2  ·  WindUI
+	红黑据点战辅助 v1.4  ·  WindUI
 	================================
 	游戏：两队（Red/Black）A/B/C 据点占领射击战
+	v1.4 变更：
+	1. 修拖窗口粘鼠标：watchdog 不再在拖动中途清 WindUI.CurrentInput
+	   （鼠标按住期间不干预，只在松开后兜底恢复）
+	2. IsMouseButtonPressed 在注入环境抛错 → 改 InputBegan/Ended 事件跟踪
 	加载：
 	loadstring(game:HttpGet("https://raw.githubusercontent.com/qweqwefff222/dropshipping-hub/main/redblack_assist.lua"))()
 
@@ -823,7 +827,7 @@ end)
 
 Window:SelectTab(1)
 notify("红黑据点战辅助", "已加载 v1.2 · RightShift 呼出/隐藏", "crosshair", 4)
-print("[红黑辅助] v1.2 加载完成")
+print("[红黑辅助] v1.4 加载完成")
 
 -- 修复 WindUI 内容区滚动（Active=false + 无滚动条导致滚不动）
 task.defer(function()
@@ -883,21 +887,37 @@ local function collectWindUI()
 	end
 end
 
+-- 鼠标按下状态事件跟踪（IsMouseButtonPressed 在注入环境抛 "Argument 1 missing or nil"，
+-- 不可用；InputBegan/InputEnded 事件已验证可用）
+local _mouseDown = false
+UserInputService.InputBegan:Connect(function(input)
+	local t = input.UserInputType
+	if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
+		_mouseDown = true
+	end
+end)
+
 local function restoreScrolling()
+	-- ⚠ v1.4 关键保护：鼠标按住期间可能正在拖窗口/滑块。窗口拖动（dist 25557）
+	-- 结束时校验 m.CurrentInput==A，若我们中途清掉它，松手时校验失败 →
+	-- 拖动状态残留 → 窗口粘在鼠标上。所以只在鼠标完全松开后才做任何恢复。
+	if _mouseDown then return end
 	for sf in pairs(_sfCache) do
 		pcall(function()
 			if not sf.ScrollingEnabled then sf.ScrollingEnabled = true end
 			if not sf.Active then sf.Active = true end
 		end)
 	end
-	-- CurrentInput 挂在 WindUI 主模块表上，直接清（松开时刻清不影响正常拖动）
+	-- CurrentInput 挂在 WindUI 主模块表上；鼠标已松开说明没有合法持有者，残留即泄漏
 	pcall(function() WindUI.CurrentInput = nil end)
 end
 
 UserInputService.InputEnded:Connect(function(input)
 	local t = input.UserInputType
 	if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
-		pcall(restoreScrolling)
+		_mouseDown = false
+		-- defer 到当帧事件处理完之后：dist 自己的清理先跑，我们只兜底泄漏场景
+		task.defer(function() pcall(restoreScrolling) end)
 	end
 end)
 
