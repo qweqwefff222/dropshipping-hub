@@ -97,6 +97,7 @@ local OwnedUpgrades = {}      -- [upgradeId] = true
 local DistrictCool = {}       -- [districtId] = 冷却截止
 local BoardCool = 0           -- 板子扩容冷却
 local UpgradeCool = {}        -- [upgradeId] = 冷却截止（升级购买防重发）
+local IncidentCool = {}       -- [incidentId] = 派遣冷却截止（防推送间隙重复派）
 local eventConns = {}         -- 全部事件连接（stop 时统一 Disconnect，防重载双监听）
 
 -- 城区定义（GAME_CONFIG.Districts 快照，价格升序）
@@ -494,6 +495,9 @@ local function connectEvents()
 						log("事故 " .. id:sub(1, 20) .. " (" .. tostring(inc.Category) .. ") 待派")
 					else
 						Incidents[id].RequiredServiceCounts = inc.RequiredServiceCounts or Incidents[id].RequiredServiceCounts
+						-- 服务器需求可能是"剩余缺口"（部分响应机制下会递减）：清零本地记账，
+						-- 缺口完全以服务器推送为准，防止 req(剩余) - 本地已派(旧) = 负数 → 永不补派
+						Incidents[id].SentCount = {}
 					end
 				end
 			end
@@ -642,31 +646,39 @@ local function stepDispatch()
 				if missing > 0 then
 					allSatisfied = false
 					for _, u in pairs(Units) do
-						if missing > 0 and tostring(u.Service) == service and u.Status == "Available" and u.AssignedIncidentId == nil then
-							toSend[#toSend + 1] = u.Id
-							missing -= 1
+						if missing > 0 and tostring(u.Service) == service and u.Status == "Available" then
+							-- AssignedIncidentId 防御：服务器全量推送为 nil，单条推送可能为空字符串
+							local aid = u.AssignedIncidentId
+							if aid == nil or aid == "" then
+								toSend[#toSend + 1] = u.Id
+								missing -= 1
+							end
 						end
 					end
 				end
 			end
 		end
 		if #toSend > 0 then
-			fireDispatch(incId, toSend)
-			-- 记账：按每个单位的实际 Service 分摊（粗记曾把全部数量摊给第一个缺口服务，导致其他服务永远显示缺员误补派）
-			for _, uid in ipairs(toSend) do
-				local u = Units[uid] or Units[tostring(uid)]
-				local svc = type(u) == "table" and tostring(u.Service or "") or ""
-				if svc ~= "" then
-					inc.SentCount[svc] = (tonumber(inc.SentCount[svc]) or 0) + 1
+			if (IncidentCool[incId] or 0) <= os.clock() then
+				fireDispatch(incId, toSend)
+				IncidentCool[incId] = os.clock() + 3 -- 与 FullStateUpdate 刷新周期一致：一批在途时不重复派
+				-- 记账：按每个单位的实际 Service 分摊（粗记曾把全部数量摊给第一个缺口服务，导致其他服务永远显示缺员误补派）
+				for _, uid in ipairs(toSend) do
+					local u = Units[uid] or Units[tostring(uid)]
+					local svc = type(u) == "table" and tostring(u.Service or "") or ""
+					if svc ~= "" then
+						inc.SentCount[svc] = (tonumber(inc.SentCount[svc]) or 0) + 1
+					end
 				end
+				State.Stat.Dispatched += 1
+				local names = {}
+				for _, uid in ipairs(toSend) do
+					names[#names + 1] = zhUnitName(Units[uid] or { Id = uid })
+				end
+				log("派遣 " .. #toSend .. " 单位（" .. table.concat(names, "、") .. "）→ " .. incId:sub(1, 18))
+				return true
 			end
-			State.Stat.Dispatched += 1
-			local names = {}
-			for _, uid in ipairs(toSend) do
-				names[#names + 1] = zhUnitName(Units[uid] or { Id = uid })
-			end
-			log("派遣 " .. #toSend .. " 单位（" .. table.concat(names, "、") .. "）→ " .. incId:sub(1, 18))
-			return true
+			-- 冷却中（上一批在途）：跳过该事故继续看下一个
 		end
 		if allSatisfied and not inc.Dispatched then
 			inc.Dispatched = true
