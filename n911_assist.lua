@@ -1,5 +1,5 @@
 --[[
-	911 调度助手 v2.7 · Obsidian UI（全中文）
+	911 调度助手 v2.9 · Obsidian UI（全中文）
 	游戏：[911调度模拟器] placeId 74226462246442
 	三合一：自动接听（含全对话+CAD提交）/ 自动调度派遣 / 自动购买单位
 	协议（反编译实锤）：
@@ -88,7 +88,7 @@ local State = {
 -- 运行时表（监听维护）
 local Calls = {}         -- [callId] = call 对象（服务器推送，含 Status/ChoicesUsed/TemplateId）
 local CallOrder = {}     -- 有序 callId 列表
-local LocalProgress = {} -- [callId] = 本地已提交选项数（独立存储，防 CallUpdated 重建丢失）
+local SentState = {} -- [callId] = {seq=最后发送序号, at=发送时刻, retries=同序号重试次数}（在途登记，不作进度权威）
 local CallCool = {}      -- [callId] = 冷却截止（防重发）
 local Incidents = {}  -- [incidentId] = {Id, Category, RecommendServices, Dispatched}
 local Units = {}      -- [unitId] = {Id, Service, Status, AssignedIncidentId}
@@ -228,7 +228,7 @@ end
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua"))()
 local Window = Library:CreateWindow({
 	Title = "911 调度助手",
-	Footer = "v2.7 · 全自动调度助手",
+	Footer = "v2.9 · 全自动调度助手",
 	ToggleKeybind = Enum.KeyCode.RightControl,
 	Center = true,
 	AutoShow = true,
@@ -645,52 +645,75 @@ local function stepDialogue()
 				log("已自动接听 " .. tostring(call.IncidentDisplayTitle or id):sub(1, 30))
 				return true
 			end
-			-- 2) 对话推进：确认驱动——以服务器 ChoicesUsed 为唯一进度真相
+			-- 2) 对话推进：在途登记 + 服务器确认驱动 + 超时重发
+			--    （旧版 max(服务器确认, 本地已发) 会让被拒选项造成本地进度虚高 → 跳过末尾问题/CAD 且永不重试）
 			if (AnsweredSet[id] or serverAnswered) and status ~= "Ended" and not flags.CreatedIncident and call.TemplateId then
-				if (CallCool[id] or 0) > os.clock() then
-					-- 冷却中：等服务器确认
-				else
-					local def = CallLib[tostring(call.TemplateId)]
-					if def then
-						local choices = orderedChoices(def)
-						-- 进度真相 = Conversation 里 Dispatcher 发言数（每提交一个选项产生一条问句/建议）
-						-- ChoicesUsed 只统计详情问题，不覆盖 ASK_LOCATION/ADVISE，弃用
-						local asked = countDispatcherLines(call)
-						local localSent = LocalProgress[id] or 0
-						local usedN = math.max(asked, localSent)
-						if usedN >= #choices then
-							-- 全部选项已提交，等 CreatedIncident
+				local def = CallLib[tostring(call.TemplateId)]
+				if def then
+					local choices = orderedChoices(def)
+					local total = #choices
+					local confirmed = math.min(countDispatcherLines(call), total) -- 服务器真进度（被接受的选项数）
+					local st = SentState[id]
+					local function cfg()
+						return {
+							Priority = def.Priority or "Low",
+							Services = {
+								Police = (def.RequiredServiceCounts and def.RequiredServiceCounts.Police) or 0,
+								Fire = (def.RequiredServiceCounts and def.RequiredServiceCounts.Fire) or 0,
+								EMS = (def.RequiredServiceCounts and def.RequiredServiceCounts.EMS) or 0,
+							},
+						}
+					end
+					if total == 0 then
+						-- 模板无选项：无事可做
+					elseif confirmed >= total then
+						-- 全部选项已被服务器接受：等 CreatedIncident；
+						-- 久等不来则兜底重发 CREATE_INCIDENT（服务器对同通话幂等）
+						if st and st.seq >= total and (os.clock() - st.at) > 6 and (CallCool[id] or 0) <= os.clock() then
+							local last = choices[total]
+							if last then
+								fireDialogue(id, tostring(last.Id), cfg())
+								SentState[id] = { seq = total, at = os.clock(), retries = (st.retries or 0) + 1 }
+								CallCool[id] = os.clock() + 2
+								log("CAD 兜底重发（" .. id:sub(1, 18) .. "）")
+								return true
+							end
+						end
+					else
+						local inFlight = st and st.seq > confirmed and (os.clock() - st.at) < 3
+						if inFlight then
+							-- 在途未确认：等 3 秒确认窗
+						elseif (CallCool[id] or 0) > os.clock() then
+							-- 发送冷却中
 						else
-							-- 提交下一个选项
-							local choice = choices[usedN + 1]
+							local seq = confirmed + 1
+							local retries = (st and st.seq == seq and st.retries) or 0
+							if retries >= 4 then
+								-- 该问连续 4 次无服务器确认：跳过防整通死等（日志留痕，仍会走到 CAD）
+								log("跳过无响应第 " .. seq .. "/" .. total .. " 问")
+								seq = confirmed + 2
+								retries = 0
+							end
+							if seq > total then seq = total end
+							local choice = choices[seq]
 							if choice then
-								local cfg = {
-									Priority = def.Priority or "Low",
-									Services = {
-										Police = (def.RequiredServiceCounts and def.RequiredServiceCounts.Police) or 0,
-										Fire = (def.RequiredServiceCounts and def.RequiredServiceCounts.Fire) or 0,
-										EMS = (def.RequiredServiceCounts and def.RequiredServiceCounts.EMS) or 0,
-									},
-								}
-								local isLast = (usedN + 1) >= #choices
-								fireDialogue(id, tostring(choice.Id), cfg)
-								LocalProgress[id] = usedN + 1
+								fireDialogue(id, tostring(choice.Id), cfg())
+								SentState[id] = { seq = seq, at = os.clock(), retries = retries + 1 }
 								CallCool[id] = os.clock() + math.max(State.DialogueStep, 0.05)
 								State.Stat.Dialogue += 1
-								if isLast then
+								if seq >= total then
 									State.Stat.CAD += 1
 									log("CAD 提交（" .. tostring(call.IncidentDisplayTitle or id):sub(1, 24) .. "）")
 								else
-									log("对话 " .. (usedN + 1) .. "/" .. #choices .. " " .. tostring(choice.Id):sub(1, 26))
+									log("对话 " .. seq .. "/" .. total .. " " .. tostring(choice.Id):sub(1, 26))
 								end
 								return true
 							end
 						end
-						-- 全部用完但 CreatedIncident 未回：等服务器
-					elseif not call._unknownLogged then
-						call._unknownLogged = true
-						log("未知模板 " .. tostring(call.TemplateId):sub(1, 30))
 					end
+				elseif not call._unknownLogged then
+					call._unknownLogged = true
+					log("未知模板 " .. tostring(call.TemplateId):sub(1, 30))
 				end
 			end
 		end
@@ -961,8 +984,8 @@ task.spawn(function()
 			if os.clock() - lastBeat > 6 then
 				lastBeat = os.clock()
 				-- 清理已结束通话的残留（CallOrder 压缩 + 进度/冷却表回收），防长挂增长
-				for cid in pairs(LocalProgress) do
-					if Calls[cid] == nil then LocalProgress[cid] = nil end
+				for cid in pairs(SentState) do
+					if Calls[cid] == nil then SentState[cid] = nil end
 				end
 				for cid in pairs(CallCool) do
 					if Calls[cid] == nil then CallCool[cid] = nil end
@@ -983,5 +1006,5 @@ task.spawn(function()
 	end
 end)
 
-Library:Notify("911 调度助手 v2.7 已加载（全自动）", 4)
-print("[911调度助手] v2.7 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板，建筑 " .. #StationsList .. " 座")
+Library:Notify("911 调度助手 v2.9 已加载（全自动）", 4)
+print("[911调度助手] v2.9 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板，建筑 " .. #StationsList .. " 座")
