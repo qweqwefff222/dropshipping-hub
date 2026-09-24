@@ -495,10 +495,21 @@ local function connectEvents()
 						log("事故 " .. id:sub(1, 20) .. " (" .. tostring(inc.Category) .. ") 待派")
 					else
 						Incidents[id].RequiredServiceCounts = inc.RequiredServiceCounts or Incidents[id].RequiredServiceCounts
-						-- 服务器需求可能是"剩余缺口"（部分响应机制下会递减）：清零本地记账，
-						-- 缺口完全以服务器推送为准，防止 req(剩余) - 本地已派(旧) = 负数 → 永不补派
-						Incidents[id].SentCount = {}
 					end
+					-- 已派记账按服务器 AssignedUnitIds 重建（服务器真相，新建/已知事故统一校准）：
+					-- req=原始需求不变；本地累计记账会因网络期重复 fire 虚高（v2.4 永不补派真凶）；
+					-- v2.5 的清零记账则在原始需求语义下反复把 Available 单位堆上去（全派出灾难）。
+					local sc = {}
+					if type(inc.AssignedUnitIds) == "table" then
+						for _, uid in ipairs(inc.AssignedUnitIds) do
+							local u = Units[tostring(uid)] or Units[uid]
+							local svc = type(u) == "table" and tostring(u.Service or "") or ""
+							if svc ~= "" then
+								sc[svc] = (sc[svc] or 0) + 1
+							end
+						end
+					end
+					Incidents[id].SentCount = sc
 				end
 			end
 			for id in pairs(Incidents) do
