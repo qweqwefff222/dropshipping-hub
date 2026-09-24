@@ -1,5 +1,5 @@
 --[[
-	911 调度助手 v1.0 · Obsidian UI（全中文）
+	911 调度助手 v2.4 · Obsidian UI（全中文）
 	游戏：[911调度模拟器] placeId 74226462246442
 	三合一：自动接听（含全对话+CAD提交）/ 自动调度派遣 / 自动购买单位
 	协议（反编译实锤）：
@@ -46,7 +46,15 @@ local function orderedChoices(def)
 		local nk = tonumber(k)
 		if nk then list[nk] = v end
 	end
-	table.sort(list, function(a, b) return (a._i or 0) < (b._i or 0) end)
+	-- 仅当数据带 _i 排序键时才 sort（否则 list 已按数字键 1..N 有序；
+	-- 全相等比较器 + Lua 不稳定排序有打乱顺序的理论风险）
+	local hasI = false
+	for _, v in ipairs(list) do
+		if type(v) == "table" and v._i ~= nil then hasI = true break end
+	end
+	if hasI then
+		table.sort(list, function(a, b) return (a._i or 0) < (b._i or 0) end)
+	end
 	-- ipairs 语义：按数字键顺序
 	local out = {}
 	for i = 1, #list do out[i] = list[i] end
@@ -89,6 +97,7 @@ local OwnedUpgrades = {}      -- [upgradeId] = true
 local DistrictCool = {}       -- [districtId] = 冷却截止
 local BoardCool = 0           -- 板子扩容冷却
 local UpgradeCool = {}        -- [upgradeId] = 冷却截止（升级购买防重发）
+local eventConns = {}         -- 全部事件连接（stop 时统一 Disconnect，防重载双监听）
 
 -- 城区定义（GAME_CONFIG.Districts 快照，价格升序）
 local DistrictList = {}
@@ -174,7 +183,7 @@ end
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua"))()
 local Window = Library:CreateWindow({
 	Title = "911 调度助手",
-	Footer = "v1.0 · 接听/调度/购买 三合一",
+	Footer = "v2.4 · 全自动调度助手",
 	ToggleKeybind = Enum.KeyCode.RightControl,
 	Center = true,
 	AutoShow = true,
@@ -353,16 +362,17 @@ local function trackIncoming(call)
 end
 
 local function connectEvents()
-	local c1 = R("IncomingCall")
-	if c1 then c1.OnClientEvent:Connect(function(call, ...) trackIncoming(call) end) end
-	local c2 = R("CallUpdated")
-	if c2 then c2.OnClientEvent:Connect(function(call, ...) trackIncoming(call) end) end
-	local c3 = R("CallEnded")
-	if c3 then c3.OnClientEvent:Connect(function(callId, ...)
+	-- 统一 hook：收集连接到 eventConns，stop 时全部 Disconnect（防重载后双监听）
+	local function hook(name, handler)
+		local r = R(name)
+		if r then eventConns[#eventConns + 1] = r.OnClientEvent:Connect(handler) end
+	end
+	hook("IncomingCall", function(call, ...) trackIncoming(call) end)
+	hook("CallUpdated", function(call, ...) trackIncoming(call) end)
+	hook("CallEnded", function(callId, ...)
 		if callId then Calls[tostring(callId)] = nil end
-	end) end
-	local c4 = R("IncidentCreated")
-	if c4 then c4.OnClientEvent:Connect(function(inc, ...)
+	end)
+	hook("IncidentCreated", function(inc, ...)
 		if type(inc) == "table" and inc.Id then
 			local id = tostring(inc.Id)
 			if Incidents[id] == nil then
@@ -378,14 +388,12 @@ local function connectEvents()
 				log("事故 " .. id:sub(1, 20) .. " (" .. tostring(inc.Category) .. ") 待派 需求:" .. HttpService:JSONEncode(inc.RequiredServiceCounts or {}))
 			end
 		end
-	end) end
-	local c5 = R("IncidentResolved")
-	if c5 then c5.OnClientEvent:Connect(function(inc, ...)
+	end)
+	hook("IncidentResolved", function(inc, ...)
 		local id = type(inc) == "table" and tostring(inc.Id) or tostring(inc or "")
 		Incidents[id] = nil
-	end) end
-	local c6 = R("UnitUpdated")
-	if c6 then c6.OnClientEvent:Connect(function(payload, ...)
+	end)
+	hook("UnitUpdated", function(payload, ...)
 		if type(payload) ~= "table" then return end
 		if payload.Mode == "FullList" and type(payload.Units) == "table" then
 			Units = {}
@@ -395,9 +403,8 @@ local function connectEvents()
 		elseif payload.Id then
 			Units[tostring(payload.Id)] = payload
 		end
-	end) end
-	local c7 = R("ShopUpdated")
-	if c7 then c7.OnClientEvent:Connect(function(data, ...)
+	end)
+	hook("ShopUpdated", function(data, ...)
 		if type(data) == "table" then
 			Shop = data
 			-- 刷新购买下拉选项（中文名列表）
@@ -421,10 +428,9 @@ local function connectEvents()
 				pcall(function() upgDropdown:SetValues(labels) end)
 			end
 		end
-	end) end
+	end)
 	-- c8：FullStateUpdate（全量数据：OwnedUnits/ActiveIncidents/Cash/ShiftActive）
-	local c8 = R("FullStateUpdate")
-	if c8 then c8.OnClientEvent:Connect(function(st, ...)
+	hook("FullStateUpdate", function(st, ...)
 		if type(st) ~= "table" then return end
 		-- 单位表全量重建
 		if type(st.OwnedUnits) == "table" then
@@ -433,15 +439,25 @@ local function connectEvents()
 				if type(u) == "table" and u.Id then Units[tostring(u.Id)] = u end
 			end
 		end
-		-- 城区解锁表 / 已购升级表
+		-- 城区解锁表 / 已购升级表（兼容数组 {"id",...} 与字典 {id=true} 两种推送格式）
 		if type(st.UnlockedDistricts) == "table" then
 			UnlockedDistricts = {}
-			for _, d in ipairs(st.UnlockedDistricts) do UnlockedDistricts[tostring(d)] = true end
+			for k, d in pairs(st.UnlockedDistricts) do
+				if type(d) == "string" or type(d) == "number" then
+					UnlockedDistricts[tostring(d)] = true -- 数组格式
+				else
+					UnlockedDistricts[tostring(k)] = true -- 字典格式
+				end
+			end
 		end
 		if type(st.OwnedUpgrades) == "table" then
 			OwnedUpgrades = {}
 			for k, v in pairs(st.OwnedUpgrades) do
-				OwnedUpgrades[tostring(k)] = (v == true) or (tonumber(v) or 0) > 0
+				if type(v) == "string" then
+					OwnedUpgrades[v] = true -- 数组格式 {"ExtraIncidentSlot1",...}
+				else
+					OwnedUpgrades[tostring(k)] = (v == true) or v == 1 or v == "true" or (tonumber(v) or 0) > 0
+				end
 			end
 		end
 		-- 现金
@@ -485,7 +501,7 @@ local function connectEvents()
 				if not present[id] then Incidents[id] = nil end
 			end
 		end
-	end) end
+	end)
 end
 connectEvents()
 
@@ -636,13 +652,12 @@ local function stepDispatch()
 		end
 		if #toSend > 0 then
 			fireDispatch(incId, toSend)
-			-- 记账（按 UnitType 对应服务粗记：直接把本次发送数摊到缺的服务上）
-			for service, need in pairs(req) do
-				need = tonumber(need) or 0
-				local sent = tonumber(inc.SentCount[service]) or 0
-				if need - sent > 0 then
-					inc.SentCount[service] = math.min(need, sent + #toSend)
-					break
+			-- 记账：按每个单位的实际 Service 分摊（粗记曾把全部数量摊给第一个缺口服务，导致其他服务永远显示缺员误补派）
+			for _, uid in ipairs(toSend) do
+				local u = Units[uid] or Units[tostring(uid)]
+				local svc = type(u) == "table" and tostring(u.Service or "") or ""
+				if svc ~= "" then
+					inc.SentCount[svc] = (tonumber(inc.SentCount[svc]) or 0) + 1
 				end
 			end
 			State.Stat.Dispatched += 1
@@ -706,31 +721,36 @@ local function stepDistrict()
 	return false
 end
 
--- 自动扩任务板：ExtraIncidentSlot1→2→3 顺序买（钱够就买下一个）
+-- 自动扩任务板：ExtraIncidentSlot1→9 顺序买；只有商店条目 CanBuy==true 才发
+-- （CanBuy 已含等级/现金/已购判定——等级不够时绝不发请求，防被拒刷屏触发服务器限流）
 local function stepBoard()
 	if type(Shop) ~= "table" or type(Shop.Upgrades) ~= "table" then return false end
 	local cash = tonumber(Shop.Cash) or 0
-	local shopCost = {}
+	local shopInfo = {}
 	for _, up in ipairs(Shop.Upgrades) do
-		if type(up) == "table" and up.Id then shopCost[tostring(up.Id)] = tonumber(up.Cost) end
+		if type(up) == "table" and up.Id then shopInfo[tostring(up.Id)] = up end
 	end
 	for _, slotId in ipairs(BOARD_SLOTS) do
-		if not OwnedUpgrades[slotId] then
-			local cost = shopCost[slotId] or 3250
-			if cash - State.DistrictReserve >= cost then
+		local info = shopInfo[slotId]
+		if info == nil then
+			return false -- 该档不在商店数据里（未收到数据或档位不存在）：停住等下次推送
+		end
+		if not OwnedUpgrades[slotId] and info.Owned ~= true then
+			local cost = tonumber(info.Cost) or 3250
+			if info.CanBuy == true and cash - State.DistrictReserve >= cost then
 				if BoardCool <= os.clock() then
 					local r = R("BuyUpgrade")
 					if r then
 						r:FireServer(slotId)
 						BoardCool = os.clock() + math.max(State.DialogueStep, 0.5)
 						State.Stat.Board += 1
-						log("扩任务板：" .. slotId .. "（$" .. cost .. "）")
+						log("扩任务板：" .. tostring(info.DisplayName or slotId) .. "（$" .. cost .. "）")
 						return true
 					end
 				end
 				return false -- 冷却中
 			end
-			return false -- 钱不够，后面更贵
+			return false -- CanBuy=false（等级/声望锁或钱不够）：不发请求，等服务器推新状态
 		end
 	end
 	return false
@@ -766,7 +786,15 @@ end
 
 -- ================= 主循环 =================
 local stopped = false
-g._N911_ASSIST_STOP = function() stopped = true end
+g._N911_ASSIST_STOP = function()
+	stopped = true
+	-- 断开全部事件监听（重载时防旧连接泄漏/双监听）
+	for _, c in ipairs(eventConns) do
+		pcall(function() c:Disconnect() end)
+	end
+	if answeredConn then pcall(function() answeredConn:Disconnect() end) end
+	eventConns = {}
+end
 g._N911_STATE = State      -- 远程诊断句柄
 g._N911_TABLES = function() return Calls, Incidents, Units, Shop end
 
@@ -796,6 +824,18 @@ task.spawn(function()
 			-- 心跳（每 6s 一条，确认循环活着）
 			if os.clock() - lastBeat > 6 then
 				lastBeat = os.clock()
+				-- 清理已结束通话的残留（CallOrder 压缩 + 进度/冷却表回收），防长挂增长
+				for cid in pairs(LocalProgress) do
+					if Calls[cid] == nil then LocalProgress[cid] = nil end
+				end
+				for cid in pairs(CallCool) do
+					if Calls[cid] == nil then CallCool[cid] = nil end
+				end
+				local alive = {}
+				for _, cid in ipairs(CallOrder) do
+					if Calls[cid] ~= nil then alive[#alive + 1] = cid end
+				end
+				if #alive ~= #CallOrder then CallOrder = alive end
 				local nCalls = 0
 				for _ in pairs(Calls) do nCalls += 1 end
 				log("运行中：对话 " .. nCalls .. " | 事故 " .. (function() local n = 0 for _ in pairs(Incidents) do n += 1 end return n end)() .. " | 单位 " .. (function() local n = 0 for _ in pairs(Units) do n += 1 end return n end)())
@@ -807,5 +847,5 @@ task.spawn(function()
 	end
 end)
 
-Library:Notify("911 调度助手 v1.1 已加载（全自动）", 4)
-print("[911调度助手] v1.1 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板")
+Library:Notify("911 调度助手 v2.4 已加载（全自动）", 4)
+print("[911调度助手] v2.4 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板")
