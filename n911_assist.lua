@@ -428,6 +428,8 @@ local function connectEvents()
 					Id = id,
 					Category = inc.Category or inc.CallCategory,
 					RequiredServiceCounts = inc.RequiredServiceCounts or {},
+					RequiredUnitTypes = inc.RequiredUnitTypes,
+					DispatchCoverage = inc.DispatchCoverage,
 					SentCount = {},
 					RecommendServices = inc.RecommendServices or (inc.ClientDisplay and inc.ClientDisplay.MapIcon),
 					Dispatched = false,
@@ -542,6 +544,8 @@ local function connectEvents()
 							Id = id,
 							Category = inc.Category or inc.CallCategory,
 							RequiredServiceCounts = inc.RequiredServiceCounts or {},
+							RequiredUnitTypes = inc.RequiredUnitTypes,
+							DispatchCoverage = inc.DispatchCoverage,
 							SentCount = {},
 							Dispatched = false,
 						}
@@ -549,6 +553,8 @@ local function connectEvents()
 						log("事故 " .. id:sub(1, 20) .. " (" .. tostring(inc.Category) .. ") 待派")
 					else
 						Incidents[id].RequiredServiceCounts = inc.RequiredServiceCounts or Incidents[id].RequiredServiceCounts
+						Incidents[id].RequiredUnitTypes = inc.RequiredUnitTypes
+						Incidents[id].DispatchCoverage = inc.DispatchCoverage
 					end
 					-- 已派记账按服务器 AssignedUnitIds 重建（服务器真相，新建/已知事故统一校准）：
 					-- req=原始需求不变；本地累计记账会因网络期重复 fire 虚高（v2.4 永不补派真凶）；
@@ -702,7 +708,30 @@ local function stepDispatch()
 		end
 		inc.SentCount = inc.SentCount or {}
 		local toSend = {}
+		local picked = {}     -- [unitId] = true（本轮已收录，防专用车/服务两循环重复选同一单位）
 		local allSatisfied = true
+		-- 1) 专用车缺口优先：事故指定车辆（如 Tanker 水罐车，派对有 +25% XP）。
+		--    服务器真相 = RequiredUnitTypes[车型] - DispatchCoverage.CoveredUnitTypeCounts[车型]
+		--    （源码判定同款），无需本地记账，FullStateUpdate 每 3s 刷新自动纠偏。
+		local reqTypes = inc.RequiredUnitTypes
+		if type(reqTypes) == "table" then
+			local covered = (type(inc.DispatchCoverage) == "table" and type(inc.DispatchCoverage.CoveredUnitTypeCounts) == "table" and inc.DispatchCoverage.CoveredUnitTypeCounts) or {}
+			for utype, need in pairs(reqTypes) do
+				need = tonumber(need) or 0
+				local missingSpecial = need - (tonumber(covered[tostring(utype)]) or 0)
+				for _, u in pairs(Units) do
+					if missingSpecial > 0 and tostring(u.UnitType) == tostring(utype) and u.Status == "Available" and not picked[u.Id] then
+						local aid = u.AssignedIncidentId
+						if aid == nil or aid == "" then
+							toSend[#toSend + 1] = u.Id
+							picked[u.Id] = true
+							missingSpecial -= 1
+						end
+					end
+				end
+			end
+		end
+		-- 2) 服务缺口（原逻辑 + picked 排除已收录单位）
 		for service, need in pairs(req) do
 			need = tonumber(need) or 0
 			if need > 0 then
@@ -711,11 +740,11 @@ local function stepDispatch()
 				if missing > 0 then
 					allSatisfied = false
 					for _, u in pairs(Units) do
-						if missing > 0 and tostring(u.Service) == service and u.Status == "Available" then
-							-- AssignedIncidentId 防御：服务器全量推送为 nil，单条推送可能为空字符串
+						if missing > 0 and tostring(u.Service) == service and u.Status == "Available" and not picked[u.Id] then
 							local aid = u.AssignedIncidentId
 							if aid == nil or aid == "" then
 								toSend[#toSend + 1] = u.Id
+								picked[u.Id] = true
 								missing -= 1
 							end
 						end
