@@ -1,5 +1,5 @@
 --[[
-	911 调度助手 v3.1 · Obsidian UI（全中文）
+	911 调度助手 v3.2 · Obsidian UI（全中文）
 	游戏：[911调度模拟器] placeId 74226462246442
 	三合一：自动接听（含全对话+CAD提交）/ 自动调度派遣 / 自动购买单位
 	协议（反编译实锤）：
@@ -231,7 +231,7 @@ end
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua"))()
 local Window = Library:CreateWindow({
 	Title = "911 调度助手",
-	Footer = "v3.1 · 全自动调度助手",
+	Footer = "v3.2 · 全自动调度助手",
 	ToggleKeybind = Enum.KeyCode.RightControl,
 	Center = true,
 	AutoShow = true,
@@ -636,6 +636,34 @@ local function countDispatcherLines(call)
 	return n
 end
 
+-- 确认进度：Conversation 里 Dispatcher 消息文本与选项原文逐一匹配（最长前缀）。
+-- 旧法数全部 Dispatcher 条目会把接听欢迎语等非选项消息计入 → confirmed 虚高 → 跳问/死等。
+local function confirmedProgress(call, choices)
+	if type(call.Conversation) ~= "table" then return 0 end
+	local texts = {}
+	for _, m in ipairs(call.Conversation) do
+		if type(m) == "table" and m.Speaker == "Dispatcher" and type(m.Text) == "string" then
+			texts[#texts + 1] = m.Text:lower()
+		end
+	end
+	local confirmed = 0
+	for i = 1, #choices do
+		local ct = tostring(choices[i].Text or choices[i].Id or ""):lower()
+		local found = false
+		if ct ~= "" then
+			for _, t in ipairs(texts) do
+				if t == ct or t:find(ct, 1, true) then found = true break end
+			end
+		end
+		if found then
+			confirmed = i
+		else
+			break -- 最长前缀：顺序语义，中断即停
+		end
+	end
+	return confirmed
+end
+
 local function stepDialogue()
 	for _, callId in ipairs(CallOrder) do
 		local call = Calls[callId]
@@ -646,29 +674,24 @@ local function stepDialogue()
 			local status = tostring(call.Status or "")
 			local flags = call.Flags or {}
 			local serverAnswered = (tonumber(call.AnsweredAt) or 0) > 0
-			-- 1) 接听：响铃中、未被自动话务处理；fire 后 3s 状态未离开 Ringing 则重试（最多 3 次），仍失败拉黑该来电
+			-- 1) 接听：响铃中、未被自动话务处理；fire 后 3s 状态未离开 Ringing 则重试（最多 2 次）。
+			--    试满 2 次不再发接听（防"已在通话中"刷屏）——直接落到对话分支试探会话：
+			--    服务器可能已接听但状态推送丢失（会话活着，试探即开始问话）；会话真死则由跳过/放弃机制收尾。
 			if status == "Ringing" and not serverAnswered and call.AutoCalltakerProcessing ~= true then
 				local try = AnswerTry[id]
-				if try and try.n >= 3 then
-					-- 接听 3 次都无效果（被限流/会话异常）：放弃该来电，不阻塞后续
-					Blacklist[id] = true
-					Calls[id] = nil
-					AnswerTry[id] = nil
-					SentState[id] = nil
-					LastSeen[id] = nil
-					log("接听无响应，放弃该来电：" .. id:sub(1, 16))
-					return true
+				if (try and try.n or 0) < 2 then
+					local needFire = (try == nil) or (os.clock() - try.at > 3)
+					if needFire and (CallCool[id] or 0) <= os.clock() then
+						local r = R("PlayerAnsweredCall")
+						if r then r:FireServer(id, call) end -- 源码 OnAnswer(Id, call) 双参数
+						AnswerTry[id] = { n = (try and try.n or 0) + 1, at = os.clock() }
+						CallCool[id] = os.clock() + math.max(State.DialogueStep, 0.05)
+						State.Stat.Answered += 1
+						log("已自动接听 " .. tostring(call.IncidentDisplayTitle or id):sub(1, 30) .. ((try and try.n or 0) > 0 and "（重试）" or ""))
+						return true
+					end
 				end
-				local needFire = (try == nil) or (os.clock() - try.at > 3)
-				if needFire and (CallCool[id] or 0) <= os.clock() then
-					local r = R("PlayerAnsweredCall")
-					if r then r:FireServer(id, call) end -- 源码 OnAnswer(Id, call) 双参数
-					AnswerTry[id] = { n = (try and try.n or 0) + 1, at = os.clock() }
-					CallCool[id] = os.clock() + math.max(State.DialogueStep, 0.05)
-					State.Stat.Answered += 1
-					log("已自动接听 " .. tostring(call.IncidentDisplayTitle or id):sub(1, 30) .. ((try and try.n or 0) > 0 and "（重试）" or ""))
-					return true
-				end
+				-- 试满 2 次：不 return，落到下方对话分支试探会话存活
 			end
 			-- 2) 对话推进：在途登记 + 服务器确认驱动 + 超时重发
 			--    （旧版 max(服务器确认, 本地已发) 会让被拒选项造成本地进度虚高 → 跳过末尾问题/CAD 且永不重试）
@@ -679,7 +702,7 @@ local function stepDialogue()
 				if def then
 					local choices = orderedChoices(def)
 					local total = #choices
-					local confirmed = math.min(countDispatcherLines(call), total) -- 服务器真进度（被接受的选项数）
+					local confirmed = math.min(confirmedProgress(call, choices), total) -- 服务器真进度（文本匹配，排除欢迎语）
 					local st = SentState[id]
 					local function cfg()
 						return {
@@ -1069,5 +1092,5 @@ task.spawn(function()
 	end
 end)
 
-Library:Notify("911 调度助手 v3.1 已加载（全自动）", 4)
-print("[911调度助手] v3.1 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板，建筑 " .. #StationsList .. " 座")
+Library:Notify("911 调度助手 v3.2 已加载（全自动）", 4)
+print("[911调度助手] v3.2 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板，建筑 " .. #StationsList .. " 座")
