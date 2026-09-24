@@ -1,5 +1,5 @@
 --[[
-	911 调度助手 v2.9 · Obsidian UI（全中文）
+	911 调度助手 v3.0 · Obsidian UI（全中文）
 	游戏：[911调度模拟器] placeId 74226462246442
 	三合一：自动接听（含全对话+CAD提交）/ 自动调度派遣 / 自动购买单位
 	协议（反编译实锤）：
@@ -88,7 +88,9 @@ local State = {
 -- 运行时表（监听维护）
 local Calls = {}         -- [callId] = call 对象（服务器推送，含 Status/ChoicesUsed/TemplateId）
 local CallOrder = {}     -- 有序 callId 列表
-local SentState = {} -- [callId] = {seq=最后发送序号, at=发送时刻, retries=同序号重试次数}（在途登记，不作进度权威）
+local SentState = {} -- [callId] = {seq=最后发送序号, at=发送时刻, retries=重试次数, skips=跳过次数}（在途登记，不作进度权威）
+local AnsweredSet = {} -- [callId] = true（本地已 fire 接听；声明须在 connectEvents 之前，钩子会引用）
+local LastSeen = {} -- [callId] = 最后一次收到服务器推送的时刻（过期清理用，防残留通话死循环）
 local CallCool = {}      -- [callId] = 冷却截止（防重发）
 local Incidents = {}  -- [incidentId] = {Id, Category, RecommendServices, Dispatched}
 local Units = {}      -- [unitId] = {Id, Service, Status, AssignedIncidentId}
@@ -228,7 +230,7 @@ end
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua"))()
 local Window = Library:CreateWindow({
 	Title = "911 调度助手",
-	Footer = "v2.9 · 全自动调度助手",
+	Footer = "v3.0 · 全自动调度助手",
 	ToggleKeybind = Enum.KeyCode.RightControl,
 	Center = true,
 	AutoShow = true,
@@ -403,6 +405,7 @@ local function trackIncoming(call)
 	call._choiceIdx = call._choiceIdx or (Calls[id] and Calls[id]._choiceIdx) or 0
 	call._busy = call._busy or (Calls[id] and Calls[id]._busy)
 	Calls[id] = call
+	LastSeen[id] = os.clock() -- 每次服务器推送刷新活跃时间（过期清理依据）
 	if isNew then
 		CallOrder[#CallOrder + 1] = id
 		log("来电 " .. tostring(call.TemplateId or id):sub(1, 40))
@@ -417,8 +420,15 @@ local function connectEvents()
 	end
 	hook("IncomingCall", function(call, ...) trackIncoming(call) end)
 	hook("CallUpdated", function(call, ...) trackIncoming(call) end)
-	hook("CallEnded", function(callId, ...)
-		if callId then Calls[tostring(callId)] = nil end
+	hook("CallEnded", function(payload, ...)
+		-- payload 兼容：可能是 callId 字符串，也可能是 call 对象（table）
+		local cid = type(payload) == "table" and tostring(payload.Id or "") or tostring(payload or "")
+		if cid ~= "" then
+			Calls[cid] = nil
+			AnsweredSet[cid] = nil
+			SentState[cid] = nil
+			LastSeen[cid] = nil
+		end
 	end)
 	hook("IncidentCreated", function(inc, ...)
 		if type(inc) == "table" and inc.Id then
@@ -612,8 +622,7 @@ local function fireBuy(unitId)
 	if r then r:FireServer(unitId) end
 end
 
--- 接听 + 全对话 + CAD：v1.4b —— 本地接听去重（fire 过不再发）+ 双参数 + Dispatcher 发言数作进度
-local AnsweredSet = {} -- [callId] = true（本地已 fire 接听）
+-- 接听 + 全对话 + CAD：进度权威只认服务器（见 stepDialogue）
 
 local function countDispatcherLines(call)
 	local n = 0
@@ -647,7 +656,9 @@ local function stepDialogue()
 			end
 			-- 2) 对话推进：在途登记 + 服务器确认驱动 + 超时重发
 			--    （旧版 max(服务器确认, 本地已发) 会让被拒选项造成本地进度虚高 → 跳过末尾问题/CAD 且永不重试）
-			if (AnsweredSet[id] or serverAnswered) and status ~= "Ended" and not flags.CreatedIncident and call.TemplateId then
+			-- 终态判定：任一终态都停止推进（Ended 之外补 Missed/Completed/Cancelled/Resolved 保险）
+			local terminal = status == "Ended" or status == "Missed" or status == "Completed" or status == "Cancelled" or status == "Resolved"
+			if (AnsweredSet[id] or serverAnswered) and not terminal and not flags.CreatedIncident and call.TemplateId then
 				local def = CallLib[tostring(call.TemplateId)]
 				if def then
 					local choices = orderedChoices(def)
@@ -668,12 +679,20 @@ local function stepDialogue()
 						-- 模板无选项：无事可做
 					elseif confirmed >= total then
 						-- 全部选项已被服务器接受：等 CreatedIncident；
-						-- 久等不来则兜底重发 CREATE_INCIDENT（服务器对同通话幂等）
+						-- 久等不来则兜底重发 CREATE_INCIDENT（服务器对同通话幂等），最多 3 次后放弃
 						if st and st.seq >= total and (os.clock() - st.at) > 6 and (CallCool[id] or 0) <= os.clock() then
 							local last = choices[total]
 							if last then
+								local cadRetries = (st.cadRetries or 0) + 1
+								if cadRetries > 3 then
+									log("CAD 无响应，已放弃该通话：" .. id:sub(1, 16))
+									Calls[id] = nil
+									AnsweredSet[id] = nil
+									SentState[id] = nil
+									return true
+								end
 								fireDialogue(id, tostring(last.Id), cfg())
-								SentState[id] = { seq = total, at = os.clock(), retries = (st.retries or 0) + 1 }
+								SentState[id] = { seq = total, at = os.clock(), retries = (st.retries or 0) + 1, skips = st.skips or 0, cadRetries = cadRetries }
 								CallCool[id] = os.clock() + 2
 								log("CAD 兜底重发（" .. id:sub(1, 18) .. "）")
 								return true
@@ -688,8 +707,19 @@ local function stepDialogue()
 						else
 							local seq = confirmed + 1
 							local retries = (st and st.seq == seq and st.retries) or 0
+							local skips = (st and st.skips) or 0
 							if retries >= 4 then
-								-- 该问连续 4 次无服务器确认：跳过防整通死等（日志留痕，仍会走到 CAD）
+								skips += 1
+								if skips >= 3 then
+									-- 多问连续无响应（典型：通话已在服务器端结束/被清理）→ 放弃该通话，
+									-- 释放遍历让新来电能被接听（否则残留通话永久抢占 stepDialogue）
+									log("通话无响应，已放弃：" .. id:sub(1, 16))
+									Calls[id] = nil
+									AnsweredSet[id] = nil
+									SentState[id] = nil
+									return true
+								end
+								-- 该问连续 4 次无服务器确认：跳过该问防整通死等（日志留痕，仍会走到 CAD）
 								log("跳过无响应第 " .. seq .. "/" .. total .. " 问")
 								seq = confirmed + 2
 								retries = 0
@@ -698,7 +728,7 @@ local function stepDialogue()
 							local choice = choices[seq]
 							if choice then
 								fireDialogue(id, tostring(choice.Id), cfg())
-								SentState[id] = { seq = seq, at = os.clock(), retries = retries + 1 }
+								SentState[id] = { seq = seq, at = os.clock(), retries = retries + 1, skips = skips }
 								CallCool[id] = os.clock() + math.max(State.DialogueStep, 0.05)
 								State.Stat.Dialogue += 1
 								if seq >= total then
@@ -987,6 +1017,19 @@ task.spawn(function()
 				for cid in pairs(SentState) do
 					if Calls[cid] == nil then SentState[cid] = nil end
 				end
+				-- 过期通话清理：120s 无任何服务器推送 = 已死通话（正常活跃通话每次选项被接受都会推送刷新）
+				for cid in pairs(Calls) do
+					local seen = LastSeen[cid]
+					if seen == nil then
+						LastSeen[cid] = os.clock() -- 老条目补登记，下轮起参与过期判定
+					elseif os.clock() - seen > 120 then
+						Calls[cid] = nil
+						AnsweredSet[cid] = nil
+						SentState[cid] = nil
+						LastSeen[cid] = nil
+						log("通话超时清理：" .. tostring(cid):sub(1, 16))
+					end
+				end
 				for cid in pairs(CallCool) do
 					if Calls[cid] == nil then CallCool[cid] = nil end
 				end
@@ -1006,5 +1049,5 @@ task.spawn(function()
 	end
 end)
 
-Library:Notify("911 调度助手 v2.9 已加载（全自动）", 4)
-print("[911调度助手] v2.9 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板，建筑 " .. #StationsList .. " 座")
+Library:Notify("911 调度助手 v3.0 已加载（全自动）", 4)
+print("[911调度助手] v3.0 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板，建筑 " .. #StationsList .. " 座")
