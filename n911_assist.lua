@@ -1,5 +1,5 @@
 --[[
-	911 调度助手 v3.0 · Obsidian UI（全中文）
+	911 调度助手 v3.1 · Obsidian UI（全中文）
 	游戏：[911调度模拟器] placeId 74226462246442
 	三合一：自动接听（含全对话+CAD提交）/ 自动调度派遣 / 自动购买单位
 	协议（反编译实锤）：
@@ -89,7 +89,8 @@ local State = {
 local Calls = {}         -- [callId] = call 对象（服务器推送，含 Status/ChoicesUsed/TemplateId）
 local CallOrder = {}     -- 有序 callId 列表
 local SentState = {} -- [callId] = {seq=最后发送序号, at=发送时刻, retries=重试次数, skips=跳过次数}（在途登记，不作进度权威）
-local AnsweredSet = {} -- [callId] = true（本地已 fire 接听；声明须在 connectEvents 之前，钩子会引用）
+local AnswerTry = {} -- [callId] = {n=接听fire次数, at=最后fire时刻}（3s 内状态未离开 Ringing 则重试，最多 3 次）
+local Blacklist = {} -- [callId] = true（判定死亡的通话：推送再带回来也不复活，防死循环刷被拒请求）
 local LastSeen = {} -- [callId] = 最后一次收到服务器推送的时刻（过期清理用，防残留通话死循环）
 local CallCool = {}      -- [callId] = 冷却截止（防重发）
 local Incidents = {}  -- [incidentId] = {Id, Category, RecommendServices, Dispatched}
@@ -230,7 +231,7 @@ end
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua"))()
 local Window = Library:CreateWindow({
 	Title = "911 调度助手",
-	Footer = "v3.0 · 全自动调度助手",
+	Footer = "v3.1 · 全自动调度助手",
 	ToggleKeybind = Enum.KeyCode.RightControl,
 	Center = true,
 	AutoShow = true,
@@ -400,6 +401,7 @@ end)
 local function trackIncoming(call)
 	if type(call) ~= "table" or call.Id == nil then return end
 	local id = tostring(call.Id)
+	if Blacklist[id] then return end -- 判死通话永不复活（推送再带来也忽略）
 	local isNew = Calls[id] == nil
 	call._answered = call._answered or (Calls[id] and Calls[id]._answered)
 	call._choiceIdx = call._choiceIdx or (Calls[id] and Calls[id]._choiceIdx) or 0
@@ -425,7 +427,7 @@ local function connectEvents()
 		local cid = type(payload) == "table" and tostring(payload.Id or "") or tostring(payload or "")
 		if cid ~= "" then
 			Calls[cid] = nil
-			AnsweredSet[cid] = nil
+			AnswerTry[cid] = nil
 			SentState[cid] = nil
 			LastSeen[cid] = nil
 		end
@@ -644,21 +646,35 @@ local function stepDialogue()
 			local status = tostring(call.Status or "")
 			local flags = call.Flags or {}
 			local serverAnswered = (tonumber(call.AnsweredAt) or 0) > 0
-			-- 1) 接听：响铃中、本地没 fire 过、未被自动话务处理
-			if status == "Ringing" and not AnsweredSet[id] and not serverAnswered and call.AutoCalltakerProcessing ~= true then
-				AnsweredSet[id] = true
-				local r = R("PlayerAnsweredCall")
-				if r then r:FireServer(id, call) end -- 源码 OnAnswer(Id, call) 双参数
-				State.Stat.Answered += 1
-				CallCool[id] = os.clock() + math.max(State.DialogueStep, 0.05)
-				log("已自动接听 " .. tostring(call.IncidentDisplayTitle or id):sub(1, 30))
-				return true
+			-- 1) 接听：响铃中、未被自动话务处理；fire 后 3s 状态未离开 Ringing 则重试（最多 3 次），仍失败拉黑该来电
+			if status == "Ringing" and not serverAnswered and call.AutoCalltakerProcessing ~= true then
+				local try = AnswerTry[id]
+				if try and try.n >= 3 then
+					-- 接听 3 次都无效果（被限流/会话异常）：放弃该来电，不阻塞后续
+					Blacklist[id] = true
+					Calls[id] = nil
+					AnswerTry[id] = nil
+					SentState[id] = nil
+					LastSeen[id] = nil
+					log("接听无响应，放弃该来电：" .. id:sub(1, 16))
+					return true
+				end
+				local needFire = (try == nil) or (os.clock() - try.at > 3)
+				if needFire and (CallCool[id] or 0) <= os.clock() then
+					local r = R("PlayerAnsweredCall")
+					if r then r:FireServer(id, call) end -- 源码 OnAnswer(Id, call) 双参数
+					AnswerTry[id] = { n = (try and try.n or 0) + 1, at = os.clock() }
+					CallCool[id] = os.clock() + math.max(State.DialogueStep, 0.05)
+					State.Stat.Answered += 1
+					log("已自动接听 " .. tostring(call.IncidentDisplayTitle or id):sub(1, 30) .. ((try and try.n or 0) > 0 and "（重试）" or ""))
+					return true
+				end
 			end
 			-- 2) 对话推进：在途登记 + 服务器确认驱动 + 超时重发
 			--    （旧版 max(服务器确认, 本地已发) 会让被拒选项造成本地进度虚高 → 跳过末尾问题/CAD 且永不重试）
 			-- 终态判定：任一终态都停止推进（Ended 之外补 Missed/Completed/Cancelled/Resolved 保险）
 			local terminal = status == "Ended" or status == "Missed" or status == "Completed" or status == "Cancelled" or status == "Resolved"
-			if (AnsweredSet[id] or serverAnswered) and not terminal and not flags.CreatedIncident and call.TemplateId then
+			if (AnswerTry[id] or serverAnswered) and not terminal and not flags.CreatedIncident and call.TemplateId then
 				local def = CallLib[tostring(call.TemplateId)]
 				if def then
 					local choices = orderedChoices(def)
@@ -686,8 +702,9 @@ local function stepDialogue()
 								local cadRetries = (st.cadRetries or 0) + 1
 								if cadRetries > 3 then
 									log("CAD 无响应，已放弃该通话：" .. id:sub(1, 16))
+									Blacklist[id] = true
 									Calls[id] = nil
-									AnsweredSet[id] = nil
+									AnswerTry[id] = nil
 									SentState[id] = nil
 									return true
 								end
@@ -711,11 +728,12 @@ local function stepDialogue()
 							if retries >= 4 then
 								skips += 1
 								if skips >= 3 then
-									-- 多问连续无响应（典型：通话已在服务器端结束/被清理）→ 放弃该通话，
+									-- 多问连续无响应（典型：通话已在服务器端结束/被清理）→ 放弃并拉黑，
 									-- 释放遍历让新来电能被接听（否则残留通话永久抢占 stepDialogue）
 									log("通话无响应，已放弃：" .. id:sub(1, 16))
+									Blacklist[id] = true
 									Calls[id] = nil
-									AnsweredSet[id] = nil
+									AnswerTry[id] = nil
 									SentState[id] = nil
 									return true
 								end
@@ -1022,9 +1040,11 @@ task.spawn(function()
 					local seen = LastSeen[cid]
 					if seen == nil then
 						LastSeen[cid] = os.clock() -- 老条目补登记，下轮起参与过期判定
-					elseif os.clock() - seen > 120 then
+					elseif os.clock() - seen > 45 then
+						-- 45s 无任何服务器推送 = 死通话（正常活跃通话每次选项被接受都会推送刷新）
+						Blacklist[cid] = true
 						Calls[cid] = nil
-						AnsweredSet[cid] = nil
+						AnswerTry[cid] = nil
 						SentState[cid] = nil
 						LastSeen[cid] = nil
 						log("通话超时清理：" .. tostring(cid):sub(1, 16))
@@ -1049,5 +1069,5 @@ task.spawn(function()
 	end
 end)
 
-Library:Notify("911 调度助手 v3.0 已加载（全自动）", 4)
-print("[911调度助手] v3.0 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板，建筑 " .. #StationsList .. " 座")
+Library:Notify("911 调度助手 v3.1 已加载（全自动）", 4)
+print("[911调度助手] v3.1 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板，建筑 " .. #StationsList .. " 座")
