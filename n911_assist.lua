@@ -62,14 +62,17 @@ local State = {
 	AutoStartShift = true,  -- 自动开始值班（每天掉线自动重开）
 	AutoDistrict = true,    -- 自动扩展城区（钱够就解锁新城区）
 	AutoBoard = true,       -- 自动扩任务板（钱够就买 ExtraIncidentSlot）
+	AutoUpgrades = true,    -- 自动购买升级（中心升级+城市计划，勾选过滤）
 	DistrictReserve = 0,    -- 扩城区现金预留
 	BuySelection = {},      -- 用户勾选要买的单位（中文名集合）
+	UpgradeSelection = {},  -- 用户勾选要买的升级（中文名集合）
+	UpgradeAll = true,      -- 升级未勾选时买全部可买
 	BuyAll = true,          -- 未勾选时买全部可买
 	CashReserve = 0,        -- 购买现金预留
 	DialogueStep = 0.9,     -- 对话选项间隔（秒）
 	Stat = {
 		Answered = 0, Dialogue = 0, CAD = 0,
-		Incidents = 0, Dispatched = 0, Bought = 0, Shifts = 0, Districts = 0, Board = 0,
+		Incidents = 0, Dispatched = 0, Bought = 0, Shifts = 0, Districts = 0, Board = 0, Upgrades = 0,
 	},
 }
 
@@ -85,6 +88,7 @@ local UnlockedDistricts = {}  -- [districtId] = true
 local OwnedUpgrades = {}      -- [upgradeId] = true
 local DistrictCool = {}       -- [districtId] = 冷却截止
 local BoardCool = 0           -- 板子扩容冷却
+local UpgradeCool = {}        -- [upgradeId] = 冷却截止（升级购买防重发）
 
 -- 城区定义（GAME_CONFIG.Districts 快照，价格升序）
 local DistrictList = {}
@@ -98,8 +102,32 @@ do
 		end
 	end
 end
--- 板子升级链
-local BOARD_SLOTS = { "ExtraIncidentSlot1", "ExtraIncidentSlot2", "ExtraIncidentSlot3" }
+-- 板子升级链（服务器现有 1-9 档，钱够+等级到就顺次买）
+local BOARD_SLOTS = { "ExtraIncidentSlot1", "ExtraIncidentSlot2", "ExtraIncidentSlot3", "ExtraIncidentSlot4", "ExtraIncidentSlot5", "ExtraIncidentSlot6", "ExtraIncidentSlot7", "ExtraIncidentSlot8", "ExtraIncidentSlot9" }
+
+-- 升级中文名映射（Id -> 中文名，来自中心升级/城市计划页）
+local UPG_ZH = {
+	ExtraCallSlot1 = "呼叫队列槽位 I（+1 来电等待）",
+	ExtraCallSlot2 = "呼叫队列槽位 II（+1 来电等待）",
+	ExtraCallSlot3 = "呼叫队列槽位 III（+1 来电等待）",
+	BetterRadioSystem = "更好的无线电（单位速度 +8%）",
+	AdvancedCAD = "CAD 路由系统（单位速度 +5%）",
+	ResponseNetwork3 = "响应网络 III（单位速度）",
+	DispatcherTraining = "调度员培训（经验 +15%）",
+	DispatcherTraining2 = "调度员培训 II（经验）",
+	TrainingGrant = "培训拨款（经验加成）",
+	CityBond = "城市债券（现金 +2%）",
+	RadioNetwork = "广播网络（单位速度 +2.5%）",
+	PoliceStrength = "警力扩充（+1 警察席位）",
+	FireStrength = "消防扩充（+1 消防席位）",
+	EMSStrength = "EMS 扩充（+1 EMS 席位）",
+}
+local function upgradeLabel(u)
+	if type(u) ~= "table" then return tostring(u) end
+	local cat = tostring(u.Tier) == "Contract" and "【城市】" or "【中心】"
+	local zh = UPG_ZH[tostring(u.Id)] or tostring(u.DisplayName or u.Id)
+	return cat .. zh .. " $" .. tostring(u.Cost or "?")
+end
 
 local RecentLog = {}  -- UI 日志
 local function log(text)
@@ -170,6 +198,7 @@ grpFn:AddToggle("AutoBuy", { Text = "自动购买单位", Default = true, Callba
 grpFn:AddToggle("AutoStartShift", { Text = "自动开始值班（每日自动重开）", Default = true, Callback = function(v) State.AutoStartShift = v end })
 grpFn:AddToggle("AutoDistrict", { Text = "自动扩展城区（钱够解锁最便宜的）", Default = true, Callback = function(v) State.AutoDistrict = v end })
 grpFn:AddToggle("AutoBoard", { Text = "自动扩任务板（钱够买下一个槽位）", Default = true, Callback = function(v) State.AutoBoard = v end })
+grpFn:AddToggle("AutoUpgrades", { Text = "自动买升级（中心升级+城市计划）", Default = true, Callback = function(v) State.AutoUpgrades = v end })
 
 local grpParam = TabMain:AddLeftGroupbox("参数")
 grpParam:AddSlider("DialogueStep", {
@@ -214,6 +243,39 @@ grpBuy:AddButton({
 	end,
 })
 
+local grpUpg = TabMain:AddRightGroupbox("升级自动购买（中心升级+城市计划）")
+local upgDropdown = grpUpg:AddDropdown("UpgradeSelection", {
+	Values = { "（等待商店数据...）" },
+	Default = {},
+	Multi = true,
+	Text = "要自动购买的升级",
+	Tooltip = "事件板栏位由「自动扩任务板」开关管理，不在此列",
+	Callback = function(v)
+		State.UpgradeSelection = type(v) == "table" and v or {}
+	end,
+})
+grpUpg:AddToggle("UpgradeAll", { Text = "未勾选时买全部可买", Default = true, Callback = function(v) State.UpgradeAll = v end })
+grpUpg:AddButton({
+	Text = "全选升级",
+	Func = function()
+		if type(Shop) == "table" and type(Shop.Upgrades) == "table" then
+			for _, u in ipairs(Shop.Upgrades) do
+				if type(u) == "table" and tostring(u.UpgradeType) ~= "IncidentSlots" then
+					State.UpgradeSelection[upgradeLabel(u)] = true
+				end
+			end
+		end
+		log("已全选升级")
+	end,
+})
+grpUpg:AddButton({
+	Text = "清空升级选择",
+	Func = function()
+		State.UpgradeSelection = {}
+		pcall(function() upgDropdown:SetValues({}) end)
+	end,
+})
+
 local grpStat = TabStat:AddLeftGroupbox("计数")
 local lbl = {}
 local function makeLabel(grp, key, text)
@@ -228,6 +290,7 @@ makeLabel(grpStat, "Bought", "购买单位：0")
 makeLabel(grpStat, "Shifts", "值班重开：0")
 makeLabel(grpStat, "Districts", "扩城区：0")
 makeLabel(grpStat, "Board", "扩任务板：0")
+makeLabel(grpStat, "Upgrades", "升级购买：0")
 makeLabel(grpStat, "Calls", "进行中对话：0")
 makeLabel(grpStat, "UnitsAvail", "可用单位：0")
 
@@ -260,6 +323,7 @@ task.spawn(function()
 			lbl.Shifts:SetText("值班重开：" .. State.Stat.Shifts)
 			lbl.Districts:SetText("扩城区：" .. State.Stat.Districts)
 			lbl.Board:SetText("扩任务板：" .. State.Stat.Board)
+			lbl.Upgrades:SetText("升级购买：" .. State.Stat.Upgrades)
 			local nCalls = 0
 			for _ in pairs(Calls) do nCalls += 1 end
 			local nAvail = 0
@@ -344,6 +408,17 @@ local function connectEvents()
 				end
 				table.sort(labels)
 				pcall(function() buyDropdown:SetValues(labels) end)
+			end
+			-- 刷新升级下拉选项（中文名列表，排除事件板栏位）
+			if type(data.Upgrades) == "table" and upgDropdown then
+				local labels = {}
+				for _, u in ipairs(data.Upgrades) do
+					if type(u) == "table" and tostring(u.UpgradeType) ~= "IncidentSlots" then
+						labels[#labels + 1] = upgradeLabel(u)
+					end
+				end
+				table.sort(labels)
+				pcall(function() upgDropdown:SetValues(labels) end)
 			end
 		end
 	end) end
@@ -661,6 +736,34 @@ local function stepBoard()
 	return false
 end
 
+-- 自动买升级（中心升级+城市计划）：CanBuy（服务器已含等级/现金/已购判定）+ 扣预留够钱才发；事件板栏位由 stepBoard 管
+local function stepUpgrades()
+	if type(Shop) ~= "table" or type(Shop.Upgrades) ~= "table" then return false end
+	local cash = tonumber(Shop.Cash) or 0
+	for _, up in ipairs(Shop.Upgrades) do
+		if type(up) == "table" and up.Id then
+			local id = tostring(up.Id)
+			if tostring(up.UpgradeType) ~= "IncidentSlots" then
+				local label = upgradeLabel(up)
+				local want = State.UpgradeAll or State.UpgradeSelection[label] == true
+				if want and up.Owned ~= true and OwnedUpgrades[id] ~= true and up.CanBuy == true then
+					if (UpgradeCool[id] or 0) <= os.clock() and cash - State.CashReserve >= (tonumber(up.Cost) or math.huge) then
+						local r = R("BuyUpgrade")
+						if r then
+							r:FireServer(id)
+							UpgradeCool[id] = os.clock() + 6
+							State.Stat.Upgrades += 1
+							log("购买升级：" .. label)
+							return true
+						end
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
 -- ================= 主循环 =================
 local stopped = false
 g._N911_ASSIST_STOP = function() stopped = true end
@@ -688,6 +791,7 @@ task.spawn(function()
 				if State.AutoBuy then acted = stepBuy() or acted end
 				if State.AutoDistrict then acted = stepDistrict() or acted end
 				if State.AutoBoard then acted = stepBoard() or acted end
+				if State.AutoUpgrades then acted = stepUpgrades() or acted end
 			end)
 			-- 心跳（每 6s 一条，确认循环活着）
 			if os.clock() - lastBeat > 6 then
