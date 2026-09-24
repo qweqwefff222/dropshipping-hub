@@ -1,5 +1,5 @@
 --[[
-	911 调度助手 v2.4 · Obsidian UI（全中文）
+	911 调度助手 v2.7 · Obsidian UI（全中文）
 	游戏：[911调度模拟器] placeId 74226462246442
 	三合一：自动接听（含全对话+CAD提交）/ 自动调度派遣 / 自动购买单位
 	协议（反编译实锤）：
@@ -71,6 +71,7 @@ local State = {
 	AutoDistrict = true,    -- 自动扩展城区（钱够就解锁新城区）
 	AutoBoard = true,       -- 自动扩任务板（钱够就买 ExtraIncidentSlot）
 	AutoUpgrades = true,    -- 自动购买升级（中心升级+城市计划，勾选过滤）
+	AutoStation = true,     -- 自动购买建筑（新城区解锁后买消防局/警察局/医院）
 	DistrictReserve = 0,    -- 扩城区现金预留
 	BuySelection = {},      -- 用户勾选要买的单位（中文名集合）
 	UpgradeSelection = {},  -- 用户勾选要买的升级（中文名集合）
@@ -80,7 +81,7 @@ local State = {
 	DialogueStep = 0.9,     -- 对话选项间隔（秒）
 	Stat = {
 		Answered = 0, Dialogue = 0, CAD = 0,
-		Incidents = 0, Dispatched = 0, Bought = 0, Shifts = 0, Districts = 0, Board = 0, Upgrades = 0,
+		Incidents = 0, Dispatched = 0, Bought = 0, Shifts = 0, Districts = 0, Board = 0, Upgrades = 0, Stations = 0,
 	},
 }
 
@@ -98,19 +99,62 @@ local DistrictCool = {}       -- [districtId] = 冷却截止
 local BoardCool = 0           -- 板子扩容冷却
 local UpgradeCool = {}        -- [upgradeId] = 冷却截止（升级购买防重发）
 local IncidentCool = {}       -- [incidentId] = 派遣冷却截止（防推送间隙重复派）
+local StationsOwned = {}      -- [stationId] = true（服务器 OwnedStations 数组）
+local StationCool = {}        -- [stationId] = 建筑购买冷却截止
 local eventConns = {}         -- 全部事件连接（stop 时统一 Disconnect，防重载双监听）
 
--- 城区定义（GAME_CONFIG.Districts 快照，价格升序）
+-- 城区定义（GAME_CONFIG.Districts 快照，价格升序）+ 建筑目录（config.Stations）
 local DistrictList = {}
+local StationsList = {}
 do
 	local okCfg, cfg911 = pcall(require, N and Modules and Modules:FindFirstChild("NineOneOne_Config"))
-	if okCfg and type(cfg911) == "table" and type(cfg911.Districts) == "table" then
-		for _, d in ipairs(cfg911.Districts) do
-			if type(d) == "table" and d.Id then
-				DistrictList[#DistrictList + 1] = { Id = tostring(d.Id), Price = tonumber(d.Price) or 0, DisplayName = tostring(d.DisplayName or d.Id) }
+	if okCfg and type(cfg911) == "table" then
+		if type(cfg911.Districts) == "table" then
+			for _, d in ipairs(cfg911.Districts) do
+				if type(d) == "table" and d.Id then
+					DistrictList[#DistrictList + 1] = { Id = tostring(d.Id), Price = tonumber(d.Price) or 0, DisplayName = tostring(d.DisplayName or d.Id) }
+				end
 			end
 		end
+		if type(cfg911.Stations) == "table" then
+			for _, s in ipairs(cfg911.Stations) do
+				if type(s) == "table" and s.Id then
+					StationsList[#StationsList + 1] = {
+						Id = tostring(s.Id),
+						DisplayName = tostring(s.DisplayName or s.Id),
+						District = tostring(s.District or ""),
+						Service = tostring(s.Service or ""),
+						Price = tonumber(s.Price) or 0,
+						Starter = s.Starter == true,
+					}
+				end
+			end
+			table.sort(StationsList, function(a, b) return a.Price < b.Price end)
+		end
 	end
+end
+-- 建筑中文名（按 DisplayName 语义翻译）
+local STATION_ZH = {
+	police_hq = "市中心警察总局",
+	fire_downtown = "市中心消防站",
+	hospital_downtown = "市中心医院",
+	fire_southgate = "南门消防站",
+	police_southgate = "南门警察局",
+	hospital_southgate = "南门社区医院",
+	fire_westvale = "西谷消防站",
+	police_westvale = "西谷警察局",
+	fire_northridge = "北岭消防站",
+	police_northridge = "北岭警察局",
+	hospital_northridge = "北岭医疗中心",
+	fire_ironyards = "铁厂消防站",
+	police_ironyards = "铁厂警察局",
+	fire_harbourfront = "港口消防站",
+	police_harbourfront = "港口警察局",
+	fire_airport = "机场救援站",
+}
+local function stationZh(s)
+	if type(s) ~= "table" then return tostring(s) end
+	return STATION_ZH[tostring(s.Id)] or tostring(s.DisplayName or s.Id)
 end
 -- 板子升级链（服务器现有 1-9 档，钱够+等级到就顺次买）
 local BOARD_SLOTS = { "ExtraIncidentSlot1", "ExtraIncidentSlot2", "ExtraIncidentSlot3", "ExtraIncidentSlot4", "ExtraIncidentSlot5", "ExtraIncidentSlot6", "ExtraIncidentSlot7", "ExtraIncidentSlot8", "ExtraIncidentSlot9" }
@@ -184,7 +228,7 @@ end
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua"))()
 local Window = Library:CreateWindow({
 	Title = "911 调度助手",
-	Footer = "v2.4 · 全自动调度助手",
+	Footer = "v2.7 · 全自动调度助手",
 	ToggleKeybind = Enum.KeyCode.RightControl,
 	Center = true,
 	AutoShow = true,
@@ -207,6 +251,7 @@ grpFn:AddToggle("AutoDispatch", { Text = "自动调度（派单位去事故）",
 grpFn:AddToggle("AutoBuy", { Text = "自动购买单位", Default = true, Callback = function(v) State.AutoBuy = v end })
 grpFn:AddToggle("AutoStartShift", { Text = "自动开始值班（每日自动重开）", Default = true, Callback = function(v) State.AutoStartShift = v end })
 grpFn:AddToggle("AutoDistrict", { Text = "自动扩展城区（钱够解锁最便宜的）", Default = true, Callback = function(v) State.AutoDistrict = v end })
+grpFn:AddToggle("AutoStation", { Text = "自动购买建筑（新城区的消防局/警察局/医院）", Default = true, Callback = function(v) State.AutoStation = v end })
 grpFn:AddToggle("AutoBoard", { Text = "自动扩任务板（钱够买下一个槽位）", Default = true, Callback = function(v) State.AutoBoard = v end })
 grpFn:AddToggle("AutoUpgrades", { Text = "自动买升级（中心升级+城市计划）", Default = true, Callback = function(v) State.AutoUpgrades = v end })
 
@@ -301,6 +346,7 @@ makeLabel(grpStat, "Shifts", "值班重开：0")
 makeLabel(grpStat, "Districts", "扩城区：0")
 makeLabel(grpStat, "Board", "扩任务板：0")
 makeLabel(grpStat, "Upgrades", "升级购买：0")
+makeLabel(grpStat, "Stations", "购买建筑：0")
 makeLabel(grpStat, "Calls", "进行中对话：0")
 makeLabel(grpStat, "UnitsAvail", "可用单位：0")
 
@@ -334,6 +380,7 @@ task.spawn(function()
 			lbl.Districts:SetText("扩城区：" .. State.Stat.Districts)
 			lbl.Board:SetText("扩任务板：" .. State.Stat.Board)
 			lbl.Upgrades:SetText("升级购买：" .. State.Stat.Upgrades)
+			lbl.Stations:SetText("购买建筑：" .. State.Stat.Stations)
 			local nCalls = 0
 			for _ in pairs(Calls) do nCalls += 1 end
 			local nAvail = 0
@@ -459,6 +506,13 @@ local function connectEvents()
 				else
 					OwnedUpgrades[tostring(k)] = (v == true) or v == 1 or v == "true" or (tonumber(v) or 0) > 0
 				end
+			end
+		end
+		-- 已拥有建筑（服务器 OwnedStations 数组，源码 IsStationOwned 用 table.find 判定）
+		if type(st.OwnedStations) == "table" then
+			StationsOwned = {}
+			for _, s in ipairs(st.OwnedStations) do
+				StationsOwned[tostring(s)] = true
 			end
 		end
 		-- 现金
@@ -744,6 +798,35 @@ local function stepDistrict()
 	return false
 end
 
+-- 自动购买建筑：新城区解锁后买该区的消防局/警察局/医院（未拥有 + 城区已解锁 + 钱够，价格升序；
+-- 源码实锤无等级/声望门槛，Starter 建筑免费视为已拥有）。城区未解锁的建筑跳过继续看下一个。
+local function stepStations()
+	if #StationsList == 0 then return false end
+	local cash = tonumber(Shop and Shop.Cash) or 0
+	for _, st in ipairs(StationsList) do
+		if not st.Starter and st.Price > 0 and not StationsOwned[st.Id] then
+			if UnlockedDistricts[st.District] then
+				if cash - State.DistrictReserve >= st.Price then
+					if (StationCool[st.Id] or 0) <= os.clock() then
+						local r = R("BuyStation")
+						if r then
+							r:FireServer(st.Id)
+							StationCool[st.Id] = os.clock() + 30
+							State.Stat.Stations += 1
+							log("购买建筑：" .. stationZh(st) .. "（$" .. st.Price .. "）")
+							return true
+						end
+					end
+					return false -- 最便宜的可买建筑在冷却，等下一轮
+				end
+				return false -- 最便宜的可买建筑钱不够，后面的更贵
+			end
+			-- 该建筑所属城区未解锁：跳过，继续看下一个（不同建筑可能属于不同城区）
+		end
+	end
+	return false
+end
+
 -- 自动扩任务板：ExtraIncidentSlot1→9 顺序买；只有商店条目 CanBuy==true 才发
 -- （CanBuy 已含等级/现金/已购判定——等级不够时绝不发请求，防被拒刷屏触发服务器限流）
 local function stepBoard()
@@ -841,6 +924,7 @@ task.spawn(function()
 				if State.AutoDispatch then acted = stepDispatch() or acted end
 				if State.AutoBuy then acted = stepBuy() or acted end
 				if State.AutoDistrict then acted = stepDistrict() or acted end
+				if State.AutoStation then acted = stepStations() or acted end
 				if State.AutoBoard then acted = stepBoard() or acted end
 				if State.AutoUpgrades then acted = stepUpgrades() or acted end
 			end)
@@ -870,5 +954,5 @@ task.spawn(function()
 	end
 end)
 
-Library:Notify("911 调度助手 v2.4 已加载（全自动）", 4)
-print("[911调度助手] v2.4 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板")
+Library:Notify("911 调度助手 v2.7 已加载（全自动）", 4)
+print("[911调度助手] v2.7 加载完成，对话库 " .. (function() local n = 0 for _ in pairs(CallLib) do n += 1 end return n end)() .. " 个模板，建筑 " .. #StationsList .. " 座")
