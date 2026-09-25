@@ -175,8 +175,59 @@ local function getKnife()
 	return hitEvent, playSound, swing
 end
 
--- ================= 主循环 =================
+-- ================= 服务器反馈监控（TextEvent = 反作弊警告通道）=================
+-- "Cooldown" = 攻击过快警告 → 自动退避拉长间隔；"Message" 含踢出/封禁字样 → 立即停机保号
 local stopped = false
+local AdaptiveInterval = nil -- 自适应间隔（nil=用用户设定值）
+local backoffLevel = 0
+task.spawn(function()
+	local textEvent = game:GetService("ReplicatedStorage"):WaitForChild("TextEvent", 10)
+	if not textEvent then return end
+	textEvent.OnClientEvent:Connect(function(kind, text, c3, c4)
+		local t = tostring(text or "")
+		if kind == "Cooldown" then
+			-- 攻击过快警告：退避
+			backoffLevel = math.min(backoffLevel + 1, 6)
+			AdaptiveInterval = math.max(State.Interval, 0.1) * (1 + backoffLevel)
+			log("服务器冷却警告（间隔提至 " .. string.format("%.2f", AdaptiveInterval) .. "s）：" .. t:sub(1, 40))
+		elseif kind == "Message" then
+			local low = t:lower()
+			if low:find("kick", 1, true) or low:find("ban", 1, true) or low:find("cheat", 1, true) or low:find("exploit", 1, true) or low:find("detect", 1, true) then
+				log("⚠ 检测警告，停止攻击保号：" .. t:sub(1, 50))
+				State.Enabled = false
+				AdaptiveInterval = nil
+				backoffLevel = 0
+			else
+				log("服务器消息：" .. t:sub(1, 50))
+			end
+		end
+	end)
+	-- 间隔自适应恢复：无警告 10s 后逐步回落到用户设定值
+	task.spawn(function()
+		while not stopped do
+			delay(2)
+			if AdaptiveInterval then
+				if os.clock() - (g._KA2_LASTWARN or 0) > 10 then
+					backoffLevel = math.max(0, backoffLevel - 1)
+					if backoffLevel == 0 then
+						AdaptiveInterval = nil
+						log("间隔已恢复正常")
+					else
+						AdaptiveInterval = math.max(State.Interval, 0.1) * (1 + backoffLevel)
+					end
+				end
+			end
+		end
+	end)
+	-- 记录警告时刻（供恢复逻辑）
+	local origConnect = true
+	g._KA2_LASTWARN = 0
+	textEvent.OnClientEvent:Connect(function()
+		g._KA2_LASTWARN = os.clock()
+	end)
+end)
+
+-- ================= 主循环 =================
 g._KA2_STOP = function() stopped = true end
 g._KA2_STATE = State
 
@@ -241,7 +292,7 @@ task.spawn(function()
 							end
 						end
 					end
-					delay(math.max(State.Interval, 0.05))
+					delay(math.max(AdaptiveInterval or State.Interval, 0.05))
 				else
 					log("未找到 Knife（需要背包有刀）")
 					delay(1)
