@@ -1,5 +1,5 @@
 --[[
-	杀戮光环 v1.0 · 在设施翻新中生存（placeId 107946054053457）· Obsidian 全中文
+	杀戮光环 v1.2 · 在设施翻新中生存（placeId 107946054053457）· Obsidian 全中文
 	协议（反编译+实测实锤）：
 	  Knife.HitEvent:FireServer(怪Model, 怪Humanoid)   —— 一刀 50 伤害
 	  Knife.PlaySound:FireServer("Play", Handle.Swing) —— 挥击音效（伴随发送）
@@ -13,8 +13,6 @@
 
 local g = getgenv()
 if g._KA2_STOP then g._KA2_STOP() end
--- 无冷却 hook 的状态标记（重复加载时还原）
-if g._KA2_UNHOOK then pcall(g._KA2_UNHOOK) g._KA2_UNHOOK = nil end
 
 local Players = game:GetService("Players")
 local lp = Players.LocalPlayer
@@ -22,7 +20,7 @@ local lp = Players.LocalPlayer
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua"))()
 local Window = Library:CreateWindow({
 	Title = "杀戮光环",
-	Footer = "v1.0 · 设施生存",
+	Footer = "v1.2 · 设施生存",
 	ToggleKeybind = Enum.KeyCode.RightControl,
 	Center = true,
 	AutoShow = true,
@@ -35,17 +33,19 @@ local State = {
 	Radius = 30,            -- 光环范围（studs）
 	Interval = 0.1,         -- 攻击间隔（秒；<0.05 服务器会丢包）
 	AnchorChar = true,      -- 定身（瞬移清怪不被围攻拖走）
-	NoCooldownHook = false, -- 无冷却 hook（游戏本地冷却失效）
-	HookApplied = false,
 	Stat = { Hits = 0, Kills = 0, Targets = 0, Dna = 0 },
 }
 local AnchorPos = nil    -- 定身锚点
 local Blacklist = {}     -- 击杀/失效目标短名单（防重复选死目标）
 
--- 忙等延迟（不受 wait hook 影响）
+-- 帧等待延迟（不忙等占核；hook 全局 wait 会导致游戏 Lua 调度器卡死——已移除该功能，
+-- 本脚本直发 remote 天然绕过本地冷却，无需 hook）
+local RunService = game:GetService("RunService")
 local function delay(t)
 	local t0 = os.clock()
-	while os.clock() - t0 < t do end
+	while os.clock() - t0 < t do
+		RunService.Heartbeat:Wait()
+	end
 end
 
 -- ================= UI =================
@@ -89,34 +89,8 @@ grpParam:AddToggle("AnchorChar", {
 	Default = true,
 	Callback = function(v) State.AnchorChar = v end,
 })
-grpParam:AddToggle("NoCooldownHook", {
-	Text = "无冷却 Hook（游戏本地冷却失效）",
-	Default = false,
-	Callback = function(v)
-		State.NoCooldownHook = v
-		if v then
-			-- 用户手法：hook wait / task.wait
-			if hookfunction and newcclosure then
-				pcall(function()
-					local o1
-					o1 = hookfunction(wait, newcclosure(function(...)
-						return o1 and o1(0) or nil
-					end))
-					local o2
-					o2 = hookfunction(task.wait, newcclosure(function(...)
-						return o2 and o2(0) or nil
-					end))
-					State.HookApplied = true
-					log("无冷却 Hook 已启用")
-				end)
-			else
-				log("执行器不支持 hookfunction")
-			end
-		else
-			log("Hook 无法撤销（重载脚本还原）")
-		end
-	end,
-})
+grpParam:AddLabel("无冷却：直发协议已绕过本地冷却，无需 hook")
+grpParam:AddLabel("（hook 全局 wait 会卡死游戏，已移除该选项）")
 
 local grpStat = TabStat:AddLeftGroupbox("计数")
 local lbl = {}
@@ -306,5 +280,5 @@ task.spawn(function()
 	end
 end)
 
-Library:Notify("杀戮光环 v1.0 已加载", 4)
-print("[杀戮光环] v1.0 加载完成")
+Library:Notify("杀戮光环 v1.2 已加载", 4)
+print("[杀戮光环] v1.2 加载完成")
